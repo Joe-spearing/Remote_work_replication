@@ -12,7 +12,7 @@ The file "occupations_by_remote_workability" produces our final classification o
 
 ### Packages
 
-The required packages are listed at the beginning of each script with the code that says "library(*packagename*)". They will need to be installed using "install.packges(@packagename*)".
+The required packages are listed at the beginning of each script with the code that says "library(*packagename*)". They will need to be installed using "install.packges(*packagename*)".
 
 ### Data
 
