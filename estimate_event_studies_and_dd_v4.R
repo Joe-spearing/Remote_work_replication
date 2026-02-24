@@ -1,20 +1,24 @@
 rm(list=ls())
+set.seed(811072144)
+
+data.directory<-'Z:\\Projects\\remote_work\\UKDA-6931-stata\\stata\\stata13_se\\ukhls'
+output.directory<-'C:\\Users\\zvh514\\OneDrive - University of York\\Documents\\remote_work\\output_charts'
+
+#Load relevant packages
+
 library(fixest)
 library(lmtest)
 library(synthdid)
 library(did)
 library(stringr)
-library(stargazer)
 library(car)
-library(DescTools)
 
 ###########
 #Load Data#
 ###########
 
-#setwd('\\\\storage.its.york.ac.uk\\che\\Projects\\remote_work\\UKDA-6931-stata\\stata\\stata13_se\\ukhls')
-setwd('Z:\\Projects\\remote_work\\UKDA-6931-stata\\stata\\stata13_se\\ukhls')
-full_df<-read.csv('US_data_remote_work_v2.CSV')
+setwd(data.directory)
+full_df<-read.csv('US_data_remote_work_v4.CSV')
 
 ###############
 #data cleaning#
@@ -45,7 +49,8 @@ vars.with.negatives<-
       'job_satisfaction',
       'wkaut1', 'wkaut2',
       'wkaut3','wkaut4',
-      'wkaut5','lonely')
+      'wkaut5','lonely','main_work_location')
+
 for (var in vars.with.negatives){
   full_df[,var]<-ifelse(full_df[,var]<0,NA,
                         full_df[,var])
@@ -68,13 +73,15 @@ offer.remote.work.incl.nw<-
 use.remote.work.incl.nw<-
   as.data.frame(ifelse(full_df[,"use_remote_work"]<0|full_df[,"offer_remote_work"]<=0,0,
                        full_df[,"use_remote_work"]))
+wmfh<-
+  as.data.frame(ifelse(full_df[,"main_work_location"]==1,1,0))
 
 colnames(offer.remote.work.incl.nw)<-'offer_remote_work_incl_nw'
 colnames(use.remote.work.incl.nw)<-'use_remote_work_incl_nw'
+colnames(wmfh)<-'work_mostly_from_home'
 
-full_df<-cbind(full_df,offer.remote.work.incl.nw,use.remote.work.incl.nw)
-
-#df<-subset(full_df,use_remote_work<0&offer_remote_work>=0)
+full_df<-cbind(full_df,offer.remote.work.incl.nw,use.remote.work.incl.nw,
+               wmfh)
 
 full_df[,"offer_remote_work"]<-
   ifelse(full_df[,"offer_remote_work"]<0,
@@ -139,7 +146,7 @@ has.kids<-as.data.frame(ifelse(full_df[,'no_kids']>0,
                                0))
 colnames(has.kids)<-'has_kids'
 
-#create a marriage variable which works for me
+#create a marriage variable which is binary
 my.mar.var<-as.data.frame(ifelse(full_df[,'marital_stat']==2|
                                    full_df[,'marital_stat']==3,1,0))
 colnames(my.mar.var)<-'my_mar_stat'
@@ -155,23 +162,11 @@ new.educ<-as.data.frame(ifelse(full_df[,'education']<3,1,
                                       ifelse(full_df[,'education']>4,3,0))))
 colnames(new.educ)<-'new_educ'
 
-lockdown<-as.data.frame(
-  ifelse((full_df[,'month']==3&full_df[,'day']>22&full_df[,'year']==2020)|
-           (full_df[,'month']>3&full_df[,'month']<7&full_df[,'year']==2020)|
-           (full_df[,'month']==7&full_df[,'day']<4&full_df[,'year']==2020)|
-           (full_df[,'month']==11&full_df[,'day']>4&full_df[,'year']==2020)|
-           (full_df[,'month']==12&full_df[,'day']<2&full_df[,'year']==2020)|
-           (full_df[,'month']==1&full_df[,'day']>5&full_df[,'year']==2021)|
-           (full_df[,'month']>2&full_df[,'month']<4&full_df[,'year']==2021)|
-           (full_df[,'month']==4&full_df[,'day']<12&full_df[,'year']==2021),
-         1,0))
-colnames(lockdown)<-'lockdown'
-
 one.dig.occ<-as.data.frame(substr(full_df[,'occupation'],1,1))
 colnames(one.dig.occ)<-'one_dig_occ'
 
 full_df<-cbind(full_df,remote.work.treat,has.kids,my.mar.var,
-               white,owns.home,new.educ,lockdown,one.dig.occ)
+               white,owns.home,new.educ,one.dig.occ)
 
 #Add in year doubles
 year.double<-as.data.frame(
@@ -183,6 +178,20 @@ year.double<-as.data.frame(
 
 colnames(year.double)<-'year_doubles'
 full_df<-cbind(full_df,year.double)
+
+#Create an all-purpose control variable
+my.control.reg<-lm(pid~factor(owns_home)+factor(my_mar_stat)+factor(new_educ)+
+                     factor(has_kids),
+                   data=full_df)
+control.variable<-as.data.frame(
+                  coef(my.control.reg)[1]+
+                  coef(my.control.reg)[2]*as.numeric(full_df[,'owns_home']==1)+
+                  coef(my.control.reg)[3]*as.numeric(full_df[,'my_mar_stat']==1)+
+                  coef(my.control.reg)[4]*as.numeric(full_df[,'new_educ']==2)+
+                  coef(my.control.reg)[5]*as.numeric(full_df[,'new_educ']==3)+
+                  coef(my.control.reg)[6]*as.numeric(full_df[,'has_kids']==1))
+colnames(control.variable)<-'control_variable'
+full_df<-cbind(full_df,control.variable)
 
 #allocate personality variables to each periods
 for (per.var in
@@ -203,14 +212,26 @@ for (per.var in
   
 }
 
+is.v.lonely<-as.data.frame(ifelse(full_df[,'lonely']==3,1,0))
+colnames(is.v.lonely)<-'is_often_lonely'
+is.lonely<-as.data.frame(ifelse(full_df[,'lonely']==1,0,1))
+colnames(is.lonely)<-'is_lonely'
+full_df<-cbind(full_df,is.lonely,is.v.lonely)
+
 #allocate some variables in 2019 to all periods
 for (var in
      c("has_kids",
        "SF12_ph",
        "health_in_general",
        "commute_time","job_level",'owns_home','paid_work',
-       'education','one_dig_occ','marital_stat',
-       'my_mar_stat')){
+       'education','new_educ','one_dig_occ','marital_stat',
+       'my_mar_stat','control_variable','is_lonely',
+       'is_often_lonely','GHQ12_caseness',
+       'anxiety_and_depression',
+       'loss_of_confidence',
+       'social_dysfunction',
+       'high_caseness',
+       'SF12_mh')){
   
   df<-subset(full_df,year==2019)
   colnames(df)[match(var,colnames(df))]<-'this_var'
@@ -232,15 +253,17 @@ for (var in
 
 #Need a first treat variable for C&S estimator
 first.treat.yr<-as.data.frame(ifelse(full_df[,'remote_work_treat']==1,
-                                  2020,2025))
+                                  2020,2026))
 colnames(first.treat.yr)<-'first_treat_year'
 first.treat.yr.double<-as.data.frame(ifelse(full_df[,'remote_work_treat']==1,
-                                     20202021,20242025))
+                                     20202021,20262027))
 colnames(first.treat.yr.double)<-'first_treat_year_doubles'
 full_df<-cbind(full_df,first.treat.yr,first.treat.yr.double)
 
+#Create dummies for each value of 2019 variables
 for (var in c('has_kids_2019_year',
               'education_2019_year',
+              'new_educ_2019_year',
               'marital_stat_2019_year',
               'owns_home_2019_year',
               'job_level_2019_year',
@@ -285,31 +308,6 @@ colnames(high.job.satisfaction)<-'high_job_satisfaction'
 
 full_df<-cbind(full_df,high.job.satisfaction)
 
-is.v.lonely<-as.data.frame(ifelse(full_df[,'lonely']==3,1,0))
-colnames(is.v.lonely)<-'is_often_lonely'
-is.lonely<-as.data.frame(ifelse(full_df[,'lonely']==1,0,1))
-colnames(is.lonely)<-'is_lonely'
-full_df<-cbind(full_df,is.lonely,is.v.lonely)
-
-#loneliness by year
-lonely.year<-lm(is_lonely~factor(year),data=full_df)
-v.lonely.year<-lm(is_often_lonely~factor(year),data=full_df)
-par(mar=c(4,2,2,2),mfrow=c(1,2))
-plot(seq(from=2017,to=2023,by=1),
-     c(coef(lonely.year)[1],
-       coef(lonely.year)[1]+
-       coef(lonely.year)[paste('factor(year)',
-                        seq(from=2018,to=2023,by=1),
-                           sep='')]),type='l',
-     main='Lonely',xlab=' ')
-plot(seq(from=2017,to=2023,by=1),
-      c(coef(v.lonely.year)[1],
-        coef(v.lonely.year)[1]+
-          coef(v.lonely.year)[paste('factor(year)',
-                                  seq(from=2018,to=2023,by=1),
-                                  sep='')]),
-     main='Often lonely',type='l',xlab=' ')
-
 #carer variables
 table(full_df[,'care_hours'])
 cares<-as.data.frame(ifelse(full_df[,'care_hours']==(-8),0,
@@ -325,7 +323,7 @@ colnames(cares.intensively)<-'cares_intensively'
 
 full_df<-cbind(full_df,cares,cares.intensively)
 
-#some employment variables
+#Employment variables
 employed<-as.data.frame(as.numeric(full_df[,'employment_stat']<3))
 unemployed<-as.data.frame(as.numeric(full_df[,'employment_stat']==3))
 retired<-as.data.frame(as.numeric(full_df[,'employment_stat']==4))
@@ -344,24 +342,45 @@ dependent.variables<-c("GHQ12_caseness",
                        'high_caseness','use_remote_work_incl_nw',
                        'is_lonely','is_often_lonely','employed',
                        'unemployed','retired',
-                       'cares','cares_intensively')
+                       'cares','cares_intensively',
+                       'work_mostly_from_home')
 
 full_df[,'year']<-as.numeric(as.character(full_df[,'year']))
+
+#######################################################
+#Include only those people who are working age in 2019#
+#######################################################
+
+working.age.people<-unique(subset(full_df,year==2019&age>21&age<65)[,'pid'])
+full_df<-subset(full_df,pid%in%working.age.people)
 
 ############################
 #Treatment propensity scores
 ############################
-#p(attrit) in each year:
+#Create a data set which is y=observed in each year and x=year and 
+#2019 variables:
+attrition.reg.results<-matrix(nrow=5,ncol=2)
 
-pids.in.sample<-unique(subset(df,year==2019)[,'pid'])
-
+pids.in.sample<-unique(subset(full_df,year==2019)[,'pid'])
 observations.df<-as.data.frame(
   cbind(c(pids.in.sample,
           pids.in.sample,
           pids.in.sample,
           pids.in.sample,
+          pids.in.sample,
+          pids.in.sample,
+          pids.in.sample,
+          pids.in.sample,
+          pids.in.sample,
+          pids.in.sample,
           pids.in.sample),
-        c(seq(from=2020,to=2020,length.out=length(pids.in.sample)),
+        c(seq(from=2014,to=2014,length.out=length(pids.in.sample)),
+          seq(from=2015,to=2015,length.out=length(pids.in.sample)),
+          seq(from=2016,to=2016,length.out=length(pids.in.sample)),
+          seq(from=2017,to=2017,length.out=length(pids.in.sample)),
+          seq(from=2018,to=2018,length.out=length(pids.in.sample)),
+          seq(from=2019,to=2019,length.out=length(pids.in.sample)),
+          seq(from=2020,to=2020,length.out=length(pids.in.sample)),
           seq(from=2021,to=2021,length.out=length(pids.in.sample)),
           seq(from=2022,to=2022,length.out=length(pids.in.sample)),
           seq(from=2023,to=2023,length.out=length(pids.in.sample)),
@@ -381,6 +400,8 @@ marital_stat_2019_year<-subset(full_df,year==2019)[match(observations.df[,'pid']
                                                          subset(full_df,year==2019)[,'pid']),'marital_stat_2019_year']
 education_2019_year<-subset(full_df,year==2019)[match(observations.df[,'pid'],
                                                       subset(full_df,year==2019)[,'pid']),'education_2019_year']
+new_educ_2019_year<-subset(full_df,year==2019)[match(observations.df[,'pid'],
+                                                      subset(full_df,year==2019)[,'pid']),'new_educ_2019_year']
 job_level_2019_year<-subset(full_df,year==2019)[match(observations.df[,'pid'],
                                                       subset(full_df,year==2019)[,'pid']),'job_level_2019_year']
 one_dig_occ_2019_year<-subset(full_df,year==2019)[match(observations.df[,'pid'],
@@ -404,6 +425,7 @@ observations.df<-cbind(observations.df,
                        remote_work_treat,
                        owns_home_2019_year)
 
+#Estimate model for being observed:
 observed.model<-glm(observed ~ factor(year)*age+
                       factor(year)*sex+
                       factor(year)*marital_stat_2019_year+
@@ -423,13 +445,16 @@ observed.model<-glm(observed ~ factor(year)*age+
                                   job_level_2019_year>0&
                                   one_dig_occ_2019_year>0&
                                   remote_work_treat>=0&
-                                  owns_home_2019_year>=0))
+                                  owns_home_2019_year>=0&
+                                    year>2019))
+
+cor(observed.model$fitted.values,observed.model$model[,'observed'])
+
 
 var(observed.model$fitted.values)/
   var(observations.df[,'observed'])
 
-stargazer(PseudoR2(observed.model))
-
+#Attach p(observed) to data set
 p.observed.key<-as.data.frame(
   cbind(observed.model$fitted.values,
         observed.model$data[,'pid'],
@@ -449,9 +474,149 @@ full_df<-cbind(full_df,fitted.p.observed)
 full_df[,'p_observed']<-ifelse(full_df[,'year']<2020,1,
                                full_df[,'p_observed'])
 
+observations.df<-cbind(observations.df,
+                       ifelse(observations.df[,'remote_work_treat']==1,
+                              2020,
+                              2026))
+colnames(observations.df)[ncol(observations.df)]<-'first_treat'
+educ.2<-as.data.frame(
+        observations.df[,'education_2019_year']>2&
+        observations.df[,'education_2019_year']<5)
+educ.3<-as.data.frame(
+  observations.df[,'education_2019_year']>4)
+colnames(educ.2)<-'marital_stat_2019_yearis2'
+colnames(educ.3)<-'marital_stat_2019_yearis3'
+observations.df<-cbind(observations.df,educ.2,educ.3)
+
+c.and.s<-att_gt(yname = 'observed',
+                tname = 'year',
+                idname = "pid",
+                gname = 'first_treat',
+                xformla = ~marital_stat_2019_year+
+                  has_kids_2019_year+
+                  owns_home_2019_year+
+                  marital_stat_2019_yearis2+
+                  marital_stat_2019_yearis3,
+                data = observations.df,
+                allow_unbalanced_panel=TRUE
+)
+
+es <- aggte(c.and.s, type = "dynamic")
+
+es$overall.att/
+es$overall.se
+
+attrition.reg.results[1,1]<-es$overall.att
+attrition.reg.results[2,1]<-es$overall.se
+attrition.reg.results[3,1]<-nrow(observations.df)
+attrition.reg.results[4,1]<-c.and.s$Wpval
+attrition.reg.results[5,1]<-mean(subset(observations.df,year<2020)[,'observed'])
+
+############################################
+#Same again, but attrition defined in waves#
+############################################
+pids.in.sample<-unique(subset(full_df,year==2019)[,'pid'])
+observations.df<-as.data.frame(
+  cbind(c(pids.in.sample,
+          pids.in.sample,
+          pids.in.sample,
+          pids.in.sample,
+          pids.in.sample,
+          pids.in.sample,
+          pids.in.sample,
+          pids.in.sample,
+          pids.in.sample,
+          pids.in.sample),
+        c(seq(from=24,to=24,length.out=length(pids.in.sample)),
+          seq(from=25,to=25,length.out=length(pids.in.sample)),
+          seq(from=26,to=26,length.out=length(pids.in.sample)),
+          seq(from=27,to=27,length.out=length(pids.in.sample)),
+          seq(from=28,to=28,length.out=length(pids.in.sample)),
+          seq(from=29,to=29,length.out=length(pids.in.sample)),
+          seq(from=30,to=30,length.out=length(pids.in.sample)),
+          seq(from=31,to=31,length.out=length(pids.in.sample)),
+          seq(from=32,to=32,length.out=length(pids.in.sample)),
+          seq(from=33,to=33,length.out=length(pids.in.sample))))
+)
+colnames(observations.df)<-c('pid','wave_number')
+observed<-as.numeric(
+  is.na(match(interaction(observations.df[,'pid'],
+                          observations.df[,'wave_number']),
+              interaction(full_df[,'pid'],
+                          full_df[,'wave_number'])))==FALSE)
+sex<-subset(full_df,year==2019)[match(observations.df[,'pid'],
+                                      subset(full_df,year==2019)[,'pid']),'sex']
+age<-subset(full_df,year==2019)[match(observations.df[,'pid'],
+                                      subset(full_df,year==2019)[,'pid']),'age']
+marital_stat_2019_year<-subset(full_df,year==2019)[match(observations.df[,'pid'],
+                                                         subset(full_df,year==2019)[,'pid']),'marital_stat_2019_year']
+education_2019_year<-subset(full_df,year==2019)[match(observations.df[,'pid'],
+                                                      subset(full_df,year==2019)[,'pid']),'education_2019_year']
+new_educ_2019_year<-subset(full_df,year==2019)[match(observations.df[,'pid'],
+                                                     subset(full_df,year==2019)[,'pid']),'new_educ_2019_year']
+job_level_2019_year<-subset(full_df,year==2019)[match(observations.df[,'pid'],
+                                                      subset(full_df,year==2019)[,'pid']),'job_level_2019_year']
+one_dig_occ_2019_year<-subset(full_df,year==2019)[match(observations.df[,'pid'],
+                                                        subset(full_df,year==2019)[,'pid']),'one_dig_occ_2019_year']
+has_kids_2019_year<-subset(full_df,year==2019)[match(observations.df[,'pid'],
+                                                     subset(full_df,year==2019)[,'pid']),'has_kids_2019_year']
+remote_work_treat<-subset(full_df,year==2019)[match(observations.df[,'pid'],
+                                                    subset(full_df,year==2019)[,'pid']),'remote_work_treat']
+owns_home_2019_year<-subset(full_df,year==2019)[match(observations.df[,'pid'],
+                                                      subset(full_df,year==2019)[,'pid']),'owns_home_2019_year']
+
+observations.df<-cbind(observations.df,
+                       observed,
+                       sex,
+                       age,
+                       marital_stat_2019_year,
+                       education_2019_year,
+                       has_kids_2019_year,
+                       job_level_2019_year,
+                       one_dig_occ_2019_year,
+                       remote_work_treat,
+                       owns_home_2019_year)
+
+observations.df<-cbind(observations.df,
+                       ifelse(observations.df[,'remote_work_treat']==1,
+                              30,
+                              36))
+colnames(observations.df)[ncol(observations.df)]<-'first_treat'
+educ.2<-as.data.frame(
+  observations.df[,'education_2019_year']>2&
+    observations.df[,'education_2019_year']<5)
+educ.3<-as.data.frame(
+  observations.df[,'education_2019_year']>4)
+colnames(educ.2)<-'marital_stat_2019_yearis2'
+colnames(educ.3)<-'marital_stat_2019_yearis3'
+observations.df<-cbind(observations.df,educ.2,educ.3)
+
+c.and.s<-att_gt(yname = 'observed',
+                tname = 'wave_number',
+                idname = "pid",
+                gname = 'first_treat',
+                xformla = ~marital_stat_2019_year+
+                  has_kids_2019_year+
+                  owns_home_2019_year+
+                  marital_stat_2019_yearis2+
+                  marital_stat_2019_yearis3,
+                data = observations.df,
+                allow_unbalanced_panel=TRUE
+)
+
+es <- aggte(c.and.s, type = "dynamic")
+
+attrition.reg.results[1,2]<-es$overall.att
+attrition.reg.results[2,2]<-es$overall.se
+attrition.reg.results[3,2]<-nrow(observations.df)
+attrition.reg.results[4,2]<-c.and.s$Wpval
+attrition.reg.results[5,2]<-mean(subset(observations.df,wave_number<30)[,'observed'])
+
+#stargazer(attrition.reg.results,out='Table3')
+
 #For synth dd need a treated variable
 treated<-as.data.frame(
-        full_df[,'remote_work_treat']*(full_df[,'year']>2019))
+  full_df[,'remote_work_treat']*(full_df[,'year']>2019))
 colnames(treated)<-'treated'
 full_df<-cbind(full_df,treated)
 
@@ -468,216 +633,50 @@ full_df[,'year_dummy']<-relevel(full_df[,'year_dummy'],ref='2019')
 full_df[,'year_doubles_dummy']<-relevel(full_df[,'year_doubles_dummy'],ref='20182019')
 
 ####################
-#Drop pre-2014 years and post 2022 years
+#Drop pre-2014 years and post 2023 years
 ####################
 
-full_df<-subset(full_df,year>=2014&year<2023)
+full_df<-subset(full_df,year>=2014&year<2024)
 
 ###############
 #Event studies#
 ###############
 
 #Store the event study coefficients in these matrices
-results.data.frame<-as.data.frame(matrix(ncol=23,nrow=0))
+results.data.frame<-as.data.frame(matrix(ncol=24,nrow=0))
 
 colnames(results.data.frame)<-
   c('sex','estimate','sample',
     'period_definition',
     'estimator','2014','2015','2016','2017',
-    '2018','2020','2021','2022',
+    '2018','2020','2021','2022','2023',
     '20142015','20162017',
     '20202021','20222023','dd_est',
     'N','pre_treat_mean','dependent_variable',
     'pre_trend_p_value','subset')
 
-#the set of estimators is:
-#TWFE (done)
-#TWFE with controls (done)
-#C&S (done)
-#C&S with PS weighting (done)
-#IPW (done)
-#IPW with controls (done)
-#balanced sample
-#balanced sample with controls
-#synth dd
-#synth dd with controls
-residualize_y<-function(dep_var,year_type,df){
+residualize_y<-function(dep_var,year_type,df,pop.subset){
   
-  formula<-as.formula(
-    paste(dep_var,
-          '~factor(',year_type,')*factor(education_2019_year)',
-          '+factor(',year_type,')*factor(my_mar_stat_2019_year)',
-          '+factor(',year_type,')*factor(owns_home_2019_year)',
-          '+factor(',year_type,')*factor(has_kids_2019_year)',
-          '|pid+',year_type,sep=''))
   
-  my.reg<-feols(formula,cluster=~pid,
+  my.reg<-feols(as.formula(paste(dep_var,
+                                 '~factor(',year_type,')*factor(control_variable_2019_year)|pid+year',
+                                 sep='')),cluster=~pid,
                 se='cluster',
                 data=subset(df,(remote_work_treat==0|year<2020)))
-
   
   y_res<-df[,dep_var]
   
-  #residualize education
-  for (y in unique(df[,year_type])[2:length(unique(df[,year_type]))]){
-    for (e in c(2,3,4,5,9)){
-      y_res<-y_res-
-    my.reg$coefficients[paste('factor(',year_type,')',y,
-    ':factor(education_2019_year)',e,sep='')]*
-        (df[,'year']==y)*
-        (df[,'education_2019_year']==e)
-    }
-  }
-  #residualize mar stat
-  for (y in unique(df[,year_type])[2:length(unique(df[,year_type]))]){
-      y_res<-y_res-
-        my.reg$coefficients[paste('factor(',year_type,')',y,
-                        ':factor(my_mar_stat_2019_year)1',sep='')]*
-      (df[,'year']==y)*
-        (df[,'my_mar_stat_2019_year']==1)
-  }
-  #residualize home owner
-  for (y in unique(df[,year_type])[2:length(unique(df[,year_type]))]){
-      y_res<-y_res-
-        my.reg$coefficients[paste('factor(',year_type,')',y,
-                  ':factor(owns_home_2019_year)1',sep='')]*
-      (df[,'year']==y)*
-        (df[,'owns_home_2019_year']==1)
-  }
-  #residualize having kids
-  for (y in unique(df[,year_type])[2:length(unique(df[,year_type]))]){
+  for (j in rownames(my.reg$coeftable)){
+    y<-substr(j,13+as.numeric(year_type=='year_doubles')*8,16+as.numeric(year_type=='year_doubles')*12)
+    c<-substr(j,52+as.numeric(year_type=='year_doubles')*12,67+as.numeric(year_type=='year_doubles')*12)
+    
     y_res<-y_res-
-      my.reg$coefficients[paste('factor(',year_type,')',y,
-                                ':factor(has_kids_2019_year)1',sep='')]*
-    (df[,'year']==y)*
-      (df[,'has_kids_2019_year']==1)
+      my.reg$coefficients[j]*
+      (df[,year_type]==y)*
+      (df[,'control_variable_2019_year']==c)
   }
   
-  #df1<-cbind(df,y_res)
-
   return(y_res)
-  
-}
-
-estimate_twfe<-function(dep_var,year_type,df){
-  
-  formula<-as.formula(
-    paste(dep_var,'~(year>2019)*remote_work_treat+factor(',year_type,')',
-          '|pid',sep=''))
-  
-  my.reg<-feols(formula,cluster=~pid,
-                se='cluster',
-                data=df)
-  
-  df<-df[is.na(df[,dep_var])==FALSE,]
-  
-  pre.trend.periods<-sort(unique(subset(df,year<2020)[,year_type]))
-  
-  reference.period<-unique(df[,year_type])[substr(unique(df[,year_type]),
-                          str_length(unique(df[,year_type])),              
-                          str_length(unique(df[,year_type])))==9]
-  df[,year_type]<-as.factor(df[,year_type])
-  df[,year_type]<-relevel(df[,year_type],
-                ref=as.character(reference.period))
-  
-  formula<-as.formula(
-    paste(dep_var,'~factor(',year_type,')*remote_work_treat+factor(',year_type,')',
-          '|pid',sep=''))
-  
-  es.reg<-feols(formula,cluster=~pid,
-                se='cluster',
-                data=df)
-  
-  time.list<-sort(unique(df[,year_type]))
-  time.list<-time.list[substr(time.list,str_length(time.list)-3,str_length(time.list))!='2019']
-  
-  F.test<-linearHypothesis(es.reg, 
-                           paste('factor(',year_type,')',
-                                 pre.trend.periods[1:(length(pre.trend.periods)-1)],
-                                 ':remote_work_treat=0',sep=''),
-                   white.adjust = "hc1")
-  
-  ouputs<-c(my.reg$coeftable['year > 2019TRUE:remote_work_treat',1],
-            my.reg$coeftable['year > 2019TRUE:remote_work_treat',2],
-            es.reg$coeftable[paste('factor(',year_type,')',time.list,':remote_work_treat',sep=''),1],
-            es.reg$coeftable[paste('factor(',year_type,')',time.list,':remote_work_treat',sep=''),2],
-            1-my.reg$ssr/my.reg$ssr_null,
-            mean(df[,dep_var][is.na(df[,dep_var])==FALSE]),
-            length(df[,dep_var][is.na(df[,dep_var])==FALSE&
-                                  is.na(df[,'remote_work_treat'])==FALSE&
-                                  is.na(df[,'year'])==FALSE]),
-            F.test$`Pr(>Chisq)`[2])
-  
-  names(ouputs)<-c('dd_est','dd_se',
-                   paste('est_factor(',year_type,')',time.list,':remote_work_treat',sep=''),
-                   paste('se_factor(',year_type,')',time.list,':remote_work_treat',sep=''),
-                   'R_sq',
-                   'pre_treat_mean',
-                   'N','pretrend_p-value')
-  
-  return(ouputs)
-  
-}
-
-estimate_twfe_ipw<-function(dep_var,year_type,df){
-  
-  df<-df[is.na(df[,dep_var])==FALSE,]
-  
-  formula<-as.formula(
-    paste(dep_var,'~(year>2019)*remote_work_treat+factor(',year_type,')',
-          '|pid',sep=''))
-  
-  my.reg<-feols(formula,cluster=~pid,
-                se='cluster',
-                data=df,
-                weights=1/df[,'p_observed'])
-  
-  pre.trend.periods<-sort(unique(subset(df,year<2020)[,year_type]))
-  
-  reference.period<-unique(df[,year_type])[substr(unique(df[,year_type]),
-                                                  str_length(unique(df[,year_type])),              
-                                                  str_length(unique(df[,year_type])))==9]
-  df[,year_type]<-as.factor(df[,year_type])
-  df[,year_type]<-relevel(df[,year_type],
-                          ref=as.character(reference.period))
-  
-  formula<-as.formula(
-    paste(dep_var,'~factor(',year_type,')*remote_work_treat+factor(',year_type,')',
-          '|pid',sep=''))
-  
-  es.reg<-feols(formula,cluster=~pid,
-                se='cluster',
-                data=df,
-                weights=1/df[,'p_observed'])
-  
-  time.list<-sort(unique(df[,year_type]))
-  time.list<-time.list[substr(time.list,str_length(time.list)-3,str_length(time.list))!='2019']
-  
-  F.test<-linearHypothesis(es.reg, 
-                           paste('factor(',year_type,')',
-                                 pre.trend.periods[1:(length(pre.trend.periods)-1)],
-                                 ':remote_work_treat=0',sep=''),
-                           white.adjust = "hc1")
-  
-  ouputs<-c(my.reg$coeftable['year > 2019TRUE:remote_work_treat',1],
-            my.reg$coeftable['year > 2019TRUE:remote_work_treat',2],
-            es.reg$coeftable[paste('factor(',year_type,')',time.list,':remote_work_treat',sep=''),1],
-            es.reg$coeftable[paste('factor(',year_type,')',time.list,':remote_work_treat',sep=''),2],
-            1-my.reg$ssr/my.reg$ssr_null,
-            mean(df[,dep_var][is.na(df[,dep_var])==FALSE]),
-            length(df[,dep_var][is.na(df[,dep_var])==FALSE&
-                                  is.na(df[,'remote_work_treat'])==FALSE&
-                                  is.na(df[,'year'])==FALSE]),
-            F.test$`Pr(>Chisq)`[2])
-  
-  names(ouputs)<-c('dd_est','dd_se',
-                   paste('est_factor(',year_type,')',time.list,':remote_work_treat',sep=''),
-                   paste('se_factor(',year_type,')',time.list,':remote_work_treat',sep=''),
-                   'R_sq',
-                   'pre_treat_mean',
-                   'N','pretrend_p-value')
-  
-  return(ouputs)
   
 }
 
@@ -707,7 +706,6 @@ create_synth_dd_data_frame<-function(pid.list,df){
   
 }
 
-
 drop_multiples<-function(df,year_var){
   
   pid.int.year<-interaction(df[,year_var],df[,'pid'])
@@ -734,19 +732,39 @@ full_df<-cbind(full_df,adults.pre.treatment)
 df.list<-list(full_df,
               subset(full_df,pid%in%ever.work.remote.pre.2020==FALSE),
               subset(full_df,marital_stat_2019_year==2|marital_stat_2019_year==3),
-              subset(full_df,marital_stat_2019_year!=2&marital_stat_2019_year!=3))
+              subset(full_df,marital_stat_2019_year!=2&marital_stat_2019_year!=3),
+              subset(full_df,has_kids_2019_year==1),
+              subset(full_df,has_kids_2019_year==0))
 
 subset.list<-c('all',
                'in-person work before 2020',
                'married',
-               'not_married')
+               'not_married',
+               'kids',
+               'no_kids')
+
+#The C&S 'formula' depends on the subset
+form.subset<-c(paste('~my_mar_stat_2019_yearis1+has_kids_2019_year+owns_home_2019_year+',
+              'new_educ_2019_yearis2+new_educ_2019_yearis3',sep=''),
+              paste('~my_mar_stat_2019_yearis1+has_kids_2019_year+owns_home_2019_year+',
+                    'new_educ_2019_yearis2+new_educ_2019_yearis3',sep=''),
+              paste('~has_kids_2019_year+owns_home_2019_year+',
+                    'new_educ_2019_yearis2+new_educ_2019_yearis3',sep=''),
+              paste('~has_kids_2019_year+owns_home_2019_year+',
+                    'new_educ_2019_yearis2+new_educ_2019_yearis3',sep=''),
+              paste('~my_mar_stat_2019_yearis1+owns_home_2019_year+',
+                    'new_educ_2019_yearis2+new_educ_2019_yearis3',sep=''),
+              paste('~my_mar_stat_2019_yearis1+owns_home_2019_year+',
+                    'new_educ_2019_yearis2+new_educ_2019_yearis3',sep=''))
 
 for (dep_var in dependent.variables){
+  print(dep_var)
   for (s in c(0,1,2)){
-#      for (pop.subset in seq(from=1,to=4,by=1)){
-        for (pop.subset in seq(from=1,to=1,by=1)){
+    print(s)
         for (yr in c('year','year_doubles')){
-  
+          
+  pop.subset<-1        
+            
   df<-as.data.frame(df.list[pop.subset])
       
   time.list<-sort(unique(df[is.na(df[,dep_var])==FALSE,yr]))
@@ -757,20 +775,14 @@ for (dep_var in dependent.variables){
   #C&S with PSW#
   ##############
   
-  #I don't like this solution but the matrix is non-singular for some
-  #variables if the last year is included:
-  if(pop.subset>2){
-    df_cs<-subset(df,year<2022)
-  }else{
-    df_cs<-df
-  }
-
-  new.data<-as.data.frame(matrix(nrow=2,ncol=23))
+  df_cs<-df
+  
+  new.data<-as.data.frame(matrix(nrow=2,ncol=24))
   colnames(new.data)<-
     c('sex','estimate','sample',
       'period_definition',
       'estimator','2014','2015','2016','2017',
-      '2018','2020','2021','2022',
+      '2018','2020','2021','2022','2023',
       '20142015','20162017',
       '20202021','20222023','dd_est',
       'N','pre_treat_mean','dependent_variable',
@@ -780,20 +792,12 @@ for (dep_var in dependent.variables){
                   tname = yr,
                   idname = "pid",
                   gname = paste("first_treat_",yr,sep=''),
-                  xformla = ~
-                    my_mar_stat_2019_yearis1+
-                    has_kids_2019_year+
-                    owns_home_2019_year+
-                    education_2019_yearis2+
-                    education_2019_yearis3+
-                    education_2019_yearis4+
-                    education_2019_yearis5+
-                    education_2019_yearis9,
+                  xformla = as.formula(form.subset[pop.subset]),
                   data = subset(df_cs,sex<=s&
-                                  sex>=max(ceiling(s/2)-max(s-1,0),0)),
+                          sex>=max(ceiling(s/2)-max(s-1,0),0)),
                   allow_unbalanced_panel=TRUE
   )
-  
+    
   new.data[,'sex']<-c('men','women','both')[s+1]
   new.data[,'subset']<-subset.list[pop.subset]
   new.data[,'estimate']<-c('point','se')
@@ -812,14 +816,26 @@ for (dep_var in dependent.variables){
   new.data[1,match(time.list[1:length(es$att.egt)],colnames(new.data))]<-es$att.egt
   new.data[2,match(time.list[1:length(es$att.egt)],colnames(new.data))]<-es$se.egt
   
+  c.and.s<-att_gt(yname = dep_var,
+                  tname = yr,
+                  idname = "pid",
+                  gname = paste("first_treat_",yr,sep=''),
+                  xformla = as.formula(form.subset[pop.subset]),
+                  data = subset(df_cs,sex<=s&year!=2021&year!=2020&
+                                  sex>=max(ceiling(s/2)-max(s-1,0),0)),
+                  allow_unbalanced_panel=TRUE
+  )
+  
+  es <- aggte(c.and.s, type = "dynamic")
+  
   new.data[1,'dd_est']<-es$overall.att
   new.data[2,'dd_est']<-es$overall.se
   
   new.data[,'N']<-sum(is.na(subset(df_cs,my_mar_stat_2019_year>=0&
-                                has_kids_2019_year>=0&
-                                owns_home_2019_year>=0&
-                                education_2019_year>0&sex<=s&
-                                  sex>=max(ceiling(s/2)-max(s-1,0),0))[,dep_var])==FALSE)
+                    has_kids_2019_year>=0&
+                    owns_home_2019_year>=0&
+                    education_2019_year>0&sex<=s&
+                    sex>=max(ceiling(s/2)-max(s-1,0),0))[,dep_var])==FALSE)
   
   pre.treat.vals<-subset(df_cs,sex<=s&
                            sex>=max(ceiling(s/2)-max(s-1,0),0)&
@@ -864,10 +880,34 @@ for (dep_var in dependent.variables){
     synth.dd.df<-create_synth_dd_data_frame(pid.list,my.df)
     synth.dd.df<-drop_multiples(synth.dd.df,'year')
     
+    #store bootstraps here
+    bs.obs<-array(NA,c(2,10,50))
+    
+    #And results here
+    new.data<-as.data.frame(matrix(nrow=6,ncol=24))
+    colnames(new.data)<-
+      c('sex','estimate','sample',
+        'period_definition',
+        'estimator','2014','2015','2016','2017',
+        '2018','2020','2021','2022','2023',
+        '20142015','20162017',
+        '20202021','20222023','dd_est',
+        'N','pre_treat_mean','dependent_variable',
+        'pre_trend_p_value','subset') 
+    
+    new.data[,'sex']<-c('men','women','both')[s+1]
+    new.data[,'subset']<-subset.list[pop.subset]
+    new.data[,'estimate']<-c('point','se')
+    new.data[,'sample']<-'balanced'
+    new.data[,'period_definition']<-'year'
+    new.data[,'estimator']<-c('twfe','twfe','synth_dd','synth_dd',
+                              'synth_dd_contr','synth_dd_contr')
+    new.data[,'dependent_variable']<-dep_var
+    new.data[1:2,'pre_treat_mean']<-mean(subset(synth.dd.df,year<2020)[,'dep_var'])
+
     setup<-panel.matrices(synth.dd.df, unit='pid',time='year',
                           outcome='dep_var',treatment='treated')
     tau.hat<-synthdid_estimate(setup$Y, setup$N0, setup$T0)
-    se<-sqrt(vcov(tau.hat,'jackknife'))
     
     time.weights<-cbind(seq(from=2014,to=2019,by=1),  
                         attributes(tau.hat)$weights$lambda)
@@ -898,6 +938,29 @@ for (dep_var in dependent.variables){
                   time.list[time.list<2019],
                   '=0',sep=''),white.adjust = "hc1")
     
+    weighted.dd<-feols(dep_var~remote_work_treat*(year>2019)|pid+year,
+                                data=subset(synth.dd.df,year!=2020&year!=2019),
+                       weights=as.numeric(subset(synth.dd.df,year!=2020&year!=2019)[,'unit_weights'])*
+                         as.numeric(subset(synth.dd.df,year!=2020&year!=2019)[,'time_weights']),
+                                cluster=~pid)
+    
+    setup<-panel.matrices(subset(synth.dd.df,year!=2020&year!=2021),
+                          unit='pid',time='year',
+                          outcome='dep_var',treatment='treated')
+    tau.hat<-synthdid_estimate(setup$Y, setup$N0, setup$T0)
+    
+    new.data[3,'dd_est']<-tau.hat
+    
+    new.data[3,6:14]<-coef(weighted.event.study)[paste('remote_work_treat:factor(year_dummy)',
+                            c(seq(from=2014,to=2018,by=1),seq(from=2020,to=2023,by=1)),sep='')]
+    new.data[3:4,'pre_trend_p_value']<-F.test.weighted$`Pr(>Chisq)`[2]
+    new.data[3:4,'pre_treat_mean']<-
+      sum(subset(synth.dd.df,year<2020)[,'dep_var']*
+         as.numeric(subset(synth.dd.df,year<2020)[,'unit_weights'])*
+           as.numeric(subset(synth.dd.df,year<2020)[,'time_weights']))/
+      sum(as.numeric(subset(synth.dd.df,year<2020)[,'unit_weights'])*
+            as.numeric(subset(synth.dd.df,year<2020)[,'time_weights']))
+
     unweighted.event.study<-feols(dep_var~remote_work_treat*factor(year_dummy)|pid,
                                   data=synth.dd.df,cluster=~pid)
     
@@ -910,92 +973,13 @@ for (dep_var in dependent.variables){
     unweighted.did<-feols(dep_var~treated|pid+year,
                           data=synth.dd.df,cluster=~pid)
     
-    weighted.did<-feols(dep_var~treated|pid+year,
-                          data=synth.dd.df,cluster=~pid)
-    
-    new.data<-as.data.frame(matrix(nrow=2,ncol=23))
-    colnames(new.data)<-
-      c('sex','estimate','sample',
-        'period_definition',
-        'estimator','2014','2015','2016','2017',
-        '2018','2020','2021','2022',
-        '20142015','20162017',
-        '20202021','20222023','dd_est',
-        'N','pre_treat_mean','dependent_variable',
-        'pre_trend_p_value','subset') 
-    
-    new.data[,'sex']<-c('men','women','both')[s+1]
-    new.data[,'subset']<-subset.list[pop.subset]
-    new.data[,'estimate']<-c('point','se')
-    new.data[,'sample']<-'balanced'
-    new.data[,'period_definition']<-'year'
-    new.data[,'estimator']<-'twfe'
-    new.data[,'dependent_variable']<-dep_var
-    new.data[,'pre_trend_p_value']<-F.test.unweighted$`Pr(>Chisq)`[2]
-    
-    new.data[1,match(time.list,colnames(new.data))]<-
-      unweighted.event.study$coeftable[paste('remote_work_treat:factor(year_dummy)',
-      c(time.list[time.list<2019],
-        seq(from=2020,to=2022,by=1)),sep=''),1]
-    new.data[2,match(time.list,colnames(new.data))]<-
-      unweighted.event.study$coeftable[paste('remote_work_treat:factor(year_dummy)',
-                                             c(time.list[time.list<2019],
-                                               seq(from=2020,to=2022,by=1)),sep=''),2]
-    
-    new.data[1,'dd_est']<-unweighted.did$coeftable['treated',1]
-    new.data[2,'dd_est']<-unweighted.did$coeftable['treated',2]
-    
-    new.data[,'N']<-nrow(synth.dd.df)
-    new.data[,'pre_treat_mean']<-mean(subset(synth.dd.df,year<2020)[,'dep_var'])
-    
-    results.data.frame<-rbind(results.data.frame,
-                              new.data)
-    
-    new.data<-as.data.frame(matrix(nrow=2,ncol=23))
-    colnames(new.data)<-
-      c('sex','estimate','sample',
-        'period_definition',
-        'estimator','2014','2015','2016','2017',
-        '2018','2020','2021','2022',
-        '20142015','20162017',
-        '20202021','20222023','dd_est',
-        'N','pre_treat_mean','dependent_variable',
-        'pre_trend_p_value','subset') 
-    
-    new.data[,'sex']<-c('men','women','both')[s+1]
-    new.data[,'subset']<-subset.list[pop.subset]
-    new.data[,'estimate']<-c('point','se')
-    new.data[,'sample']<-'balanced'
-    new.data[,'period_definition']<-'year'
-    new.data[,'estimator']<-'synth_dd'
-    new.data[,'dependent_variable']<-dep_var
-    new.data[,'pre_trend_p_value']<-F.test.weighted$`Pr(>Chisq)`[2]
-    
-    new.data[1,match(time.list,colnames(new.data))]<-
-      unweighted.event.study$coeftable[paste('remote_work_treat:factor(year_dummy)',
-                                             c(time.list[time.list<2019],
-                                               seq(from=2020,to=2022,by=1)),sep=''),1]
-    new.data[2,match(time.list,colnames(new.data))]<-
-      unweighted.event.study$coeftable[paste('remote_work_treat:factor(year_dummy)',
-                                             c(time.list[time.list<2019],
-                                               seq(from=2020,to=2022,by=1)),sep=''),2]
-    
-    new.data[1,'dd_est']<-tau.hat
-    new.data[2,'dd_est']<-se
-    
-    new.data[,'N']<-nrow(synth.dd.df)
-    new.data[,'pre_treat_mean']<-
-      sum(subset(synth.dd.df,year<2020)[,'dep_var']*
-            as.numeric(subset(synth.dd.df,year<2020)[,'unit_weights'])*
-            subset(synth.dd.df,year<2020)[,'time_weights'])/
-      sum(as.numeric(subset(synth.dd.df,year<2020)[,'unit_weights'])*
-            subset(synth.dd.df,year<2020)[,'time_weights'])
-    
-    results.data.frame<-rbind(results.data.frame,
-                              new.data)
+    new.data[1,'dd_est']<-coef(unweighted.did)[1]
+    new.data[1,6:14]<-coef(unweighted.event.study)[paste('remote_work_treat:factor(year_dummy)',
+                                                       c(seq(from=2014,to=2018,by=1),seq(from=2020,to=2023,by=1)),sep='')]
+    new.data[1:2,'pre_trend_p_value']<-F.test.unweighted$`Pr(>Chisq)`[2]
     
     my.df<-cbind(my.df,
-                 residualize_y('dep_var','year',my.df))
+                 residualize_y('dep_var','year',my.df,pop.subset))
     colnames(my.df)[ncol(my.df)]<-'resid_dep_var'
     my.df<-my.df[is.na(my.df[,'resid_dep_var'])==FALSE,]
     
@@ -1006,8 +990,7 @@ for (dep_var in dependent.variables){
                           outcome='resid_dep_var',
                           treatment='treated')
     tau.hat<-synthdid_estimate(setup$Y, setup$N0, setup$T0)
-    se<-sqrt(vcov(tau.hat,'jackknife'))
-    
+
     time.weights<-cbind(seq(from=2014,to=2019,by=1),  
                         attributes(tau.hat)$weights$lambda)
     
@@ -1028,78 +1011,186 @@ for (dep_var in dependent.variables){
     colnames(times.weights)<-'time_weights'
     synth.dd.df<-cbind(synth.dd.df,unit.weight,times.weights)
     
-    weighted.event.study<-feols(dep_var~remote_work_treat*factor(year_dummy)|pid,
-                data=synth.dd.df,weights=as.numeric(synth.dd.df[,'unit_weights']),
-                              cluster=~pid)
+    weighted.event.study<-feols(resid_dep_var~remote_work_treat*factor(year_dummy)|pid,
+                                data=synth.dd.df,weights=as.numeric(synth.dd.df[,'unit_weights']),
+                                cluster=~pid)
     
     F.test.weighted<-linearHypothesis(weighted.event.study, 
                                       paste('remote_work_treat:factor(year_dummy)',
                                             time.list[time.list<2019],
                                             '=0',sep=''),white.adjust = "hc1")
     
-    unweighted.event.study<-feols(dep_var~remote_work_treat*factor(year_dummy)|pid,
-                                  data=synth.dd.df,cluster=~pid)
+    new.data[5,6:14]<-coef(weighted.event.study)[paste('remote_work_treat:factor(year_dummy)',
+                         c(seq(from=2014,to=2018,by=1),seq(from=2020,to=2023,by=1)),sep='')]
     
-    F.test.unweighted<-linearHypothesis(unweighted.event.study, 
-                                        paste('remote_work_treat:factor(year_dummy)',
-                                              time.list[time.list<2019],
-                                              '=0',sep=''),
-                                        white.adjust = "hc1")
+    new.data[5:6,'pre_trend_p_value']<-F.test.weighted$`Pr(>Chisq)`[2]
     
-    unweighted.did<-feols(dep_var~treated|pid+year,
-                          data=synth.dd.df,cluster=~pid)
+    new.data[5:6,'pre_treat_mean']<-
+      sum(subset(synth.dd.df,year<2020)[,'dep_var']*
+            as.numeric(subset(synth.dd.df,year<2020)[,'unit_weights'])*
+            as.numeric(subset(synth.dd.df,year<2020)[,'time_weights']))/
+      sum(as.numeric(subset(synth.dd.df,year<2020)[,'unit_weights'])*
+            as.numeric(subset(synth.dd.df,year<2020)[,'time_weights']))
     
-    weighted.did<-feols(dep_var~treated|pid+year,
-                        data=synth.dd.df,cluster=~pid)
+    setup<-panel.matrices(subset(synth.dd.df,year!=2020&year!=2021), unit='pid',time='year',
+                          outcome='resid_dep_var',
+                          treatment='treated')
+    tau.hat<-synthdid_estimate(setup$Y, setup$N0, setup$T0)
     
-    new.data<-as.data.frame(matrix(nrow=2,ncol=23))
-    colnames(new.data)<-
-      c('sex','estimate','sample',
-        'period_definition',
-        'estimator','2014','2015','2016','2017',
-        '2018','2020','2021','2022',
-        '20142015','20162017',
-        '20202021','20222023','dd_est',
-        'N','pre_treat_mean','dependent_variable',
-        'pre_trend_p_value','subset') 
+    new.data[5,'dd_est']<-tau.hat
     
-    new.data[,'sex']<-c('men','women','both')[s+1]
-    new.data[,'subset']<-subset.list[pop.subset]
-    new.data[,'estimate']<-c('point','se')
-    new.data[,'sample']<-'balanced'
-    new.data[,'period_definition']<-'year'
-    new.data[,'estimator']<-'synth_dd_contr'
-    new.data[,'dependent_variable']<-dep_var
-    new.data[,'pre_trend_p_value']<-F.test.unweighted$`Pr(>Chisq)`[2]
+    #bootstrap for standard errors
+    for (i in seq(from=1,to=50,by=1)){
     
-    new.data[1,match(time.list,colnames(new.data))]<-
-      unweighted.event.study$coeftable[paste('remote_work_treat:factor(year_dummy)',
-                                             c(time.list[time.list<2019],
-                                               seq(from=2020,to=2022,by=1)),sep=''),1]
-    new.data[2,match(time.list,colnames(new.data))]<-
-      unweighted.event.study$coeftable[paste('remote_work_treat:factor(year_dummy)',
-                                             c(time.list[time.list<2019],
-                                               seq(from=2020,to=2022,by=1)),sep=''),2]
+    #draw pids
+    pid.bs<-sample(unique(synth.dd.df[,'pid']),length(unique(synth.dd.df[,'pid'])),
+                   replace=TRUE)
     
-    new.data[1,'dd_est']<-unweighted.did$coeftable['treated',1]
-    new.data[2,'dd_est']<-unweighted.did$coeftable['treated',2]
+    time.periods<-sort(unique(synth.dd.df[,'year']))
+    
+    synth.dd.df.bs<-synth.dd.df[match(interaction(sort(rep(pid.bs,length(time.periods))),time.periods),
+                          interaction(synth.dd.df[,'pid'],
+                                      synth.dd.df[,'year'])),]
+    
+    while(sum(synth.dd.df.bs[(length(time.periods)+1):nrow(synth.dd.df.bs),'pid']==
+              synth.dd.df.bs[1:(nrow(synth.dd.df.bs)-length(time.periods)),'pid'])>0){
+    
+    #redefine duplicates
+    synth.dd.df.bs[(length(time.periods)+1):nrow(synth.dd.df.bs),'pid']<-
+      ifelse(synth.dd.df.bs[(length(time.periods)+1):nrow(synth.dd.df.bs),'pid']==
+               synth.dd.df.bs[1:(nrow(synth.dd.df.bs)-length(time.periods)),'pid'],
+      synth.dd.df.bs[(length(time.periods)+1):nrow(synth.dd.df.bs),'pid']-1,
+      synth.dd.df.bs[(length(time.periods)+1):nrow(synth.dd.df.bs),'pid'])
+    
+    pid.bs<-sort(unique(synth.dd.df.bs[,'pid']))
+    
+    synth.dd.df.bs<-synth.dd.df.bs[match(interaction(sort(rep(pid.bs,length(time.periods))),
+                                                     time.periods),
+                  interaction(synth.dd.df.bs[,'pid'],
+                              synth.dd.df.bs[,'year'])),]
+    
+    }
+    
+    synth.dd.df.bs<-cbind(synth.dd.df.bs,
+                          residualize_y('dep_var','year',synth.dd.df.bs, pop.subset))
+    colnames(synth.dd.df.bs)[ncol(synth.dd.df.bs)]<-'resid_dep_var_bs'
+   
+    setup<-panel.matrices(synth.dd.df.bs, unit='pid',time='year',
+                          outcome='resid_dep_var_bs',treatment='treated')
+    tau.hat<-synthdid_estimate(setup$Y, setup$N0, setup$T0)
+    
+    time.weights<-cbind(seq(from=2014,to=2019,by=1),  
+                        attributes(tau.hat)$weights$lambda)
+    
+    control.unit.weights<-
+      cbind(rownames(setup$W)[1:setup$N0],attributes(tau.hat)$weights$omega)
+    
+    unit.weight<-as.data.frame(
+      ifelse(is.na(match(synth.dd.df.bs[,'pid'],control.unit.weights[,1])),
+             1/length(unique(subset(synth.dd.df.bs,remote_work_treat==1)[,'pid'])),
+             control.unit.weights[match(synth.dd.df.bs[,'pid'],control.unit.weights[,1]),2])
+    )
+    colnames(unit.weight)<-'unit_weights'
+    times.weights<-as.data.frame(
+      ifelse(is.na(match(synth.dd.df.bs[,'year'],time.weights[,1])),
+             1/length(unique(subset(synth.dd.df.bs,year>2019)[,'year'])),
+             time.weights[match(synth.dd.df.bs[,'year'],time.weights[,1]),2])
+    )
+    colnames(times.weights)<-'time_weights'
+    synth.dd.df.bs[,'unit_weights']<-unit.weight[,'unit_weights']
+    synth.dd.df.bs[,'time_weights']<-times.weights[,'time_weights']
+    
+    
+    weighted.event.study<-feols(resid_dep_var_bs~remote_work_treat*factor(year_dummy)|pid,
+                                data=synth.dd.df.bs,
+                                weights=as.numeric(synth.dd.df.bs[,'unit_weights']),
+                                cluster=~pid)
+    
+    bs.obs[1,2:10,i]<-coef(weighted.event.study)[paste('remote_work_treat:factor(year_dummy)',
+                                  c(seq(from=2014,to=2018,by=1),
+                                    seq(from=2020,to=2023,by=1)),sep='')]
+    
+    setup<-panel.matrices(subset(synth.dd.df.bs,year!=2020&year!=2021), unit='pid',time='year',
+                          outcome='resid_dep_var_bs',treatment='treated')
+    tau.hat<-synthdid_estimate(setup$Y, setup$N0, setup$T0)
+    
+    bs.obs[1,1,i]<-tau.hat
+    
+    setup<-panel.matrices(synth.dd.df.bs, unit='pid',time='year',
+                          outcome='resid_dep_var_bs',
+                          treatment='treated')
+    tau.hat<-synthdid_estimate(setup$Y, setup$N0, setup$T0)
+    
+    time.weights<-cbind(seq(from=2014,to=2019,by=1),  
+                        attributes(tau.hat)$weights$lambda)
+    
+    control.unit.weights<-
+      cbind(rownames(setup$W)[1:setup$N0],attributes(tau.hat)$weights$omega)
+    
+    unit.weight<-as.data.frame(
+      ifelse(is.na(match(synth.dd.df.bs[,'pid'],control.unit.weights[,1])),
+             1/length(unique(subset(synth.dd.df.bs,remote_work_treat==1)[,'pid'])),
+             control.unit.weights[match(synth.dd.df.bs[,'pid'],control.unit.weights[,1]),2])
+    )
+    colnames(unit.weight)<-'unit_weights'
+    times.weights<-as.data.frame(
+      ifelse(is.na(match(synth.dd.df.bs[,'year'],time.weights[,1])),
+             1/length(unique(subset(synth.dd.df.bs,year>2019)[,'year'])),
+             time.weights[match(synth.dd.df.bs[,'year'],time.weights[,1]),2])
+    )
+    colnames(times.weights)<-'time_weights'
+    
+    synth.dd.df.bs[,'unit_weights']<-unit.weight[,'unit_weights']
+    synth.dd.df.bs[,'time_weights']<-times.weights[,'time_weights']
+    
+    weighted.event.study<-feols(resid_dep_var_bs~remote_work_treat*factor(year_dummy)|pid,
+                                data=synth.dd.df.bs,
+                                weights=as.numeric(synth.dd.df.bs[,'unit_weights']),
+                                cluster=~pid)
+    
+    bs.obs[2,2:10,i]<-coef(weighted.event.study)[paste('remote_work_treat:factor(year_dummy)',
+                                        c(seq(from=2014,to=2018,by=1),
+                                  seq(from=2020,to=2023,by=1)),sep='')]
+    
+    setup<-panel.matrices(subset(synth.dd.df.bs,year!=2020&year!=2021),
+                          unit='pid',time='year',
+                          outcome='resid_dep_var_bs',
+                          treatment='treated')
+    tau.hat<-synthdid_estimate(setup$Y, setup$N0, setup$T0)
+    
+    bs.obs[2,1,i]<-tau.hat
+    
+
+    }
+    
+    new.data[4,'dd_est']<-sqrt(var(bs.obs[1,1,]))
+    
+    for (j in seq(from=1,to=9,by=1)){
+    new.data[4,5+j]<-sqrt(var(bs.obs[1,j+1,]))
+    }
+    new.data[6,'dd_est']<-sqrt(var(bs.obs[2,1,]))
+    for (j in seq(from=1,to=9,by=1)){
+      new.data[6,5+j]<-sqrt(var(bs.obs[2,j+1,]))
+    }
     
     new.data[,'N']<-nrow(synth.dd.df)
-    new.data[,'pre_treat_mean']<-mean(subset(synth.dd.df,year<2020)[,'dep_var'])
     
     results.data.frame<-rbind(results.data.frame,
                               new.data)
     
   
-    
     }
     ######################  
     #2 year balanced panel
     ######################
     
-    if(dep_var!='use_remote_work_incl_nw'|pop.subset!=2){    
+    if(dep_var %in%
+       c("wkaut1","wkaut2",
+         "wkaut3","wkaut4",                
+         "wkaut5", "use_remote_work_incl_nw",
+         'low_autonomy_summary')){    
         
-    time.list<-sort(unique(subset(df,year<2022)[
+    time.list<-sort(unique(subset(df,year<2024)[
     is.na(df[,dep_var])==FALSE,'year_doubles']))
     pre.treat.times<-sort(unique(subset(df,year<2020)[
       is.na(df[,dep_var])==FALSE,'year_doubles']))
@@ -1108,22 +1199,21 @@ for (dep_var in dependent.variables){
     pre.treat.times<-pre.treat.times[substr(pre.treat.times,str_length(time.list)-3,
                                       str_length(pre.treat.times))!='2019']
     
-    my.df<-subset(df,treated>=0&year<2022&sex<=s&
+    my.df<-subset(df,treated>=0&year<2024&sex<=s&
                     sex>=max(ceiling(s/2)-max(s-1,0),0))
     colnames(my.df)[match(dep_var,colnames(my.df))]<-'dep_var'
     my.df<-subset(my.df,dep_var>=0&treated>=0)
     
     pid.list<-get_people_in_2_year_balanced_panel(subset(my.df,
-                        year<2022&year>2013&year_doubles!=0))
+                        year<2024&year>2013&year_doubles!=0))
     synth.dd.df<-create_synth_dd_data_frame(pid.list,
-                subset(my.df,year<2022&year>2013&year_doubles!=0))
+                subset(my.df,year<2024&year>2013&year_doubles!=0))
     synth.dd.df<-drop_multiples(synth.dd.df,'year_doubles')
     
     setup<-panel.matrices(synth.dd.df, unit='pid',time='year_doubles',
                           outcome='dep_var',treatment='treated')
     tau.hat<-synthdid_estimate(setup$Y, setup$N0, setup$T0)
-    se<-sqrt(vcov(tau.hat,'jackknife'))
-    
+
     control.unit.weights<-
       cbind(rownames(setup$W)[1:setup$N0],attributes(tau.hat)$weights$omega)
     
@@ -1153,7 +1243,7 @@ for (dep_var in dependent.variables){
                                   data=synth.dd.df,cluster=~pid)
     
     unweighted.did<-feols(dep_var~treated|pid+year_doubles,
-                          data=synth.dd.df,cluster=~pid)
+                          data=subset(synth.dd.df,year!=2020&year!=2021),cluster=~pid)
     
     F.test.weighted<-linearHypothesis(weighted.event.study, 
                     paste('remote_work_treat:factor(year_doubles_dummy)',
@@ -1167,89 +1257,62 @@ for (dep_var in dependent.variables){
                                             '=0',sep=''),
                                       white.adjust = "hc1")
     
-    new.data<-as.data.frame(matrix(nrow=2,ncol=23))
+    new.data<-as.data.frame(matrix(nrow=6,ncol=24))
     colnames(new.data)<-
       c('sex','estimate','sample',
         'period_definition',
         'estimator','2014','2015','2016','2017',
-        '2018','2020','2021','2022',
+        '2018','2020','2021','2022','2023',
         '20142015','20162017',
         '20202021','20222023','dd_est',
         'N','pre_treat_mean','dependent_variable',
-        'pre_trend_p_value','subset') 
+        'pre_trend_p_value','subset')
     
     new.data[,'sex']<-c('men','women','both')[s+1]
     new.data[,'subset']<-subset.list[pop.subset]
     new.data[,'estimate']<-c('point','se')
     new.data[,'sample']<-'balanced'
     new.data[,'period_definition']<-'year_doubles'
-    new.data[,'estimator']<-'twfe'
+    new.data[,'estimator']<-
+      c('twfe','twfe','synth_dd','synth_dd',
+        'synth_dd_contr','synth_dd_contr')
     new.data[,'dependent_variable']<-dep_var
-    new.data[,'pre_trend_p_value']<-F.test.unweighted$`Pr(>Chisq)`[2]
-    
+
     new.data[1,match(time.list,colnames(new.data))]<-
       unweighted.event.study$coeftable[
         paste('remote_work_treat:factor(year_doubles_dummy)',
               time.list,sep=''),1]
-    new.data[2,match(time.list,colnames(new.data))]<-
-      unweighted.event.study$coeftable[
-        paste('remote_work_treat:factor(year_doubles_dummy)',
-              time.list,sep=''),2]
+    new.data[1:2,'pre_trend_p_value']<-F.test.unweighted$`Pr(>Chisq)`[2]
     
     new.data[1,'dd_est']<-unweighted.did$coeftable['treated',1]
     new.data[2,'dd_est']<-unweighted.did$coeftable['treated',2]
     
-    new.data[,'N']<-nrow(synth.dd.df)
-    new.data[,'pre_treat_mean']<-mean(subset(synth.dd.df,year<2020)[,'dep_var'])
+    new.data[1:2,'N']<-nrow(synth.dd.df)
+    new.data[1:2,'pre_treat_mean']<-mean(subset(synth.dd.df,year<2020)[,'dep_var'])
     
-    results.data.frame<-rbind(results.data.frame,
-                              new.data)
-    
-    new.data<-as.data.frame(matrix(nrow=2,ncol=23))
-    colnames(new.data)<-
-      c('sex','estimate','sample',
-        'period_definition',
-        'estimator','2014','2015','2016','2017',
-        '2018','2020','2021','2022',
-        '20142015','20162017',
-        '20202021','20222023','dd_est',
-        'N','pre_treat_mean','dependent_variable',
-        'pre_trend_p_value','subset')  
-    
-    new.data[,'sex']<-c('men','women','both')[s+1]
-    new.data[,'subset']<-subset.list[pop.subset]
-    new.data[,'estimate']<-c('point','se')
-    new.data[,'sample']<-'balanced'
-    new.data[,'period_definition']<-'year_doubles'
-    new.data[,'estimator']<-'synth_dd'
-    new.data[,'dependent_variable']<-dep_var
-    new.data[,'pre_trend_p_value']<-F.test.weighted$`Pr(>Chisq)`[2]
-    
-    new.data[1,match(time.list,colnames(new.data))]<-
+    new.data[3,match(time.list,colnames(new.data))]<-
       weighted.event.study$coeftable[
         paste('remote_work_treat:factor(year_doubles_dummy)',
         time.list,sep=''),1]
-    new.data[2,match(time.list,colnames(new.data))]<-
-      weighted.event.study$coeftable[  
-        paste('remote_work_treat:factor(year_doubles_dummy)',
-               time.list,sep=''),2]
+
+    setup<-panel.matrices(subset(synth.dd.df,year!=2020&year!=2021), unit='pid',time='year_doubles',
+                          outcome='dep_var',treatment='treated')
+    tau.hat<-synthdid_estimate(setup$Y, setup$N0, setup$T0)
     
-    new.data[1,'dd_est']<-tau.hat
-    new.data[2,'dd_est']<-se
-    
-    new.data[,'N']<-nrow(synth.dd.df)
-    new.data[,'pre_treat_mean']<-
+    new.data[3,'dd_est']<-tau.hat
+
+    new.data[3:4,'N']<-nrow(synth.dd.df)
+    new.data[3:4,'pre_treat_mean']<-
       sum(subset(synth.dd.df,year<2020)[,'dep_var']*
             as.numeric(subset(synth.dd.df,year<2020)[,'unit_weights'])*
             as.numeric(subset(synth.dd.df,year<2020)[,'time_weights']))/
       sum(as.numeric(subset(synth.dd.df,year<2020)[,'unit_weights'])*
             as.numeric(subset(synth.dd.df,year<2020)[,'time_weights']))
     
-    results.data.frame<-rbind(results.data.frame,
-                              new.data)
+    new.data[3:4,'pre_trend_p_value']<-F.test.weighted$`Pr(>Chisq)`[2]
     
     my.df<-cbind(my.df,
-                 residualize_y('dep_var','year_doubles',my.df))
+            residualize_y('dep_var','year_doubles',my.df, pop.subset))
     colnames(my.df)[ncol(my.df)]<-'resid_dep_var'
     my.df<-my.df[is.na(my.df[,'resid_dep_var'])==FALSE,]
     
@@ -1260,8 +1323,7 @@ for (dep_var in dependent.variables){
                           outcome='resid_dep_var',
                           treatment='treated')
     tau.hat<-synthdid_estimate(setup$Y, setup$N0, setup$T0)
-    se<-sqrt(vcov(tau.hat,'jackknife'))
-    
+
     control.unit.weights<-
       cbind(rownames(setup$W)[1:setup$N0],attributes(tau.hat)$weights$omega)
     
@@ -1280,18 +1342,15 @@ for (dep_var in dependent.variables){
              time.weights[match(synth.dd.df[,'year_doubles'],time.weights[,1]),2])
     )
     colnames(times.weights)<-'time_weights'
-    synth.dd.df<-cbind(synth.dd.df,unit.weight,times.weights)
+    synth.dd.df<-cbind(synth.dd.df, unit.weight, times.weights)
     
-    weighted.event.study<-feols(dep_var~remote_work_treat*factor(year_doubles_dummy)|pid,
+    weighted.event.study<-feols(resid_dep_var~remote_work_treat*factor(year_doubles_dummy)|pid,
                                 data=synth.dd.df,
                                 weights=as.numeric(synth.dd.df[,'unit_weights']),
                                 cluster=~pid)
     
-    unweighted.event.study<-feols(dep_var~remote_work_treat*factor(year_doubles_dummy)|pid,
+    unweighted.event.study<-feols(resid_dep_var~remote_work_treat*factor(year_doubles_dummy)|pid,
                                   data=synth.dd.df,cluster=~pid)
-    
-    unweighted.did<-feols(dep_var~treated|pid+year_doubles,
-                          data=synth.dd.df,cluster=~pid)
     
     F.test.weighted<-linearHypothesis(weighted.event.study, 
                                       paste('remote_work_treat:factor(year_doubles_dummy)',
@@ -1299,46 +1358,214 @@ for (dep_var in dependent.variables){
                                             '=0',sep=''),
                                       white.adjust = "hc1")
     
-    F.test.unweighted<-linearHypothesis(unweighted.event.study, 
-                                        paste('remote_work_treat:factor(year_doubles_dummy)',
-                                              pre.treat.times,
-                                              '=0',sep=''),
-                                        white.adjust = "hc1")
+    new.data[5:6,'N']<-nrow(synth.dd.df)
+    new.data[5:6,'pre_treat_mean']<-
+      sum(subset(synth.dd.df,year<2020)[,'dep_var']*
+            as.numeric(subset(synth.dd.df,year<2020)[,'unit_weights'])*
+            as.numeric(subset(synth.dd.df,year<2020)[,'time_weights']))/
+      sum(as.numeric(subset(synth.dd.df,year<2020)[,'unit_weights'])*
+            as.numeric(subset(synth.dd.df,year<2020)[,'time_weights']))
     
-    new.data<-as.data.frame(matrix(nrow=2,ncol=23))
+    new.data[5,match(time.list,colnames(new.data))]<-
+      weighted.event.study$coeftable[
+        paste('remote_work_treat:factor(year_doubles_dummy)',
+              time.list,sep=''),1]
+    new.data[5:6,'pre_trend_p_value']<-F.test.weighted$`Pr(>Chisq)`[2]
+    
+    setup<-panel.matrices(subset(synth.dd.df,year!=2020&year!=2021), unit='pid',time='year_doubles',
+                          outcome='resid_dep_var',
+                          treatment='treated')
+    tau.hat<-synthdid_estimate(setup$Y, setup$N0, setup$T0)
+    
+    new.data[5,'dd_est']<-tau.hat
+    
+    #bootstrap for standard errors
+    bs.obs<-array(NA,c(2,5,50))
+    
+    for (i in seq(from=1,to=50,by=1)){
+      
+      #draw pids
+      pid.bs<-sample(unique(synth.dd.df[,'pid']),length(unique(synth.dd.df[,'pid'])),
+                     replace=TRUE)
+      
+      synth.dd.df.bs<-synth.dd.df[match(interaction(sort(rep(pid.bs,5)),
+                              c('20142015','20162017','20182019','20202021','20222023')),
+                                        interaction(synth.dd.df[,'pid'],
+                                                    synth.dd.df[,'year_doubles'])),]
+
+      synth.dd.df.bs[,'pid']<-rep(seq(from=1,to=length(pid.bs),by=1),each=5)
+      
+      synth.dd.df.bs<-cbind(synth.dd.df.bs,
+                            residualize_y('dep_var','year_doubles',synth.dd.df.bs, pop.subset))
+      colnames(synth.dd.df.bs)[ncol(synth.dd.df.bs)]<-'resid_dep_var_bs'
+      
+      setup<-panel.matrices(synth.dd.df.bs, unit='pid',time='year_doubles',
+                            outcome='resid_dep_var_bs',treatment='treated')
+      tau.hat<-synthdid_estimate(setup$Y, setup$N0, setup$T0)
+      
+      time.weights<-cbind(c('20142015','20162017','20182019'),  
+                          attributes(tau.hat)$weights$lambda)
+      
+      control.unit.weights<-
+        cbind(rownames(setup$W)[1:setup$N0],attributes(tau.hat)$weights$omega)
+      
+      unit.weight<-as.data.frame(
+        ifelse(is.na(match(synth.dd.df.bs[,'pid'],control.unit.weights[,1])),
+               1/length(unique(subset(synth.dd.df.bs,remote_work_treat==1)[,'pid'])),
+               control.unit.weights[match(synth.dd.df.bs[,'pid'],control.unit.weights[,1]),2])
+      )
+      colnames(unit.weight)<-'unit_weights'
+      times.weights<-as.data.frame(
+        ifelse(is.na(match(synth.dd.df.bs[,'year_doubles'],time.weights[,1])),
+               1/length(unique(subset(synth.dd.df.bs,year>2019)[,'year_doubles'])),
+               time.weights[match(synth.dd.df.bs[,'year_doubles'],time.weights[,1]),2])
+      )
+      colnames(times.weights)<-'time_weights'
+      synth.dd.df.bs[,'unit_weights']<-unit.weight[,'unit_weights']
+      synth.dd.df.bs[,'time_weights']<-times.weights[,'time_weights']
+      
+      weighted.event.study<-feols(resid_dep_var_bs~remote_work_treat*factor(year_doubles_dummy)|pid,
+                                  data=synth.dd.df.bs,
+                                  weights=as.numeric(synth.dd.df.bs[,'unit_weights']),
+                                  cluster=~pid)
+      
+      bs.obs[1,2:5,i]<-weighted.event.study$coeftable[
+        paste('remote_work_treat:factor(year_doubles_dummy)',
+              time.list,sep=''),1]
+      
+      setup<-panel.matrices(subset(synth.dd.df.bs,year!=2020&year!=2021), unit='pid',time='year_doubles',
+                            outcome='resid_dep_var_bs',treatment='treated')
+      tau.hat<-synthdid_estimate(setup$Y, setup$N0, setup$T0)
+      
+      bs.obs[1,1,i]<-tau.hat
+      
+      setup<-panel.matrices(synth.dd.df.bs, unit='pid',time='year_doubles',
+                            outcome='resid_dep_var',
+                            treatment='treated')
+      tau.hat<-synthdid_estimate(setup$Y, setup$N0, setup$T0)
+      
+      time.weights<-cbind(c('20142015','20162017','20182019'),  
+                          attributes(tau.hat)$weights$lambda)
+      
+      control.unit.weights<-
+        cbind(rownames(setup$W)[1:setup$N0],attributes(tau.hat)$weights$omega)
+      
+      unit.weight<-as.data.frame(
+        ifelse(is.na(match(synth.dd.df.bs[,'pid'],control.unit.weights[,1])),
+               1/length(unique(subset(synth.dd.df.bs,remote_work_treat==1)[,'pid'])),
+               control.unit.weights[match(synth.dd.df.bs[,'pid'],control.unit.weights[,1]),2])
+      )
+      colnames(unit.weight)<-'unit_weights'
+      times.weights<-as.data.frame(
+        ifelse(is.na(match(synth.dd.df.bs[,'year_doubles'],time.weights[,1])),
+               1/length(unique(subset(synth.dd.df.bs,year>2019)[,'year_doubles'])),
+               time.weights[match(synth.dd.df.bs[,'year_doubles'],time.weights[,1]),2])
+      )
+      colnames(times.weights)<-'time_weights'
+      synth.dd.df.bs[,'unit_weights']<-unit.weight[,'unit_weights']
+      synth.dd.df.bs[,'time_weights']<-times.weights[,'time_weights']
+      
+      weighted.event.study<-feols(resid_dep_var_bs~remote_work_treat*factor(year_doubles_dummy)|pid,
+                                  data=synth.dd.df.bs,
+                                  weights=as.numeric(synth.dd.df.bs[,'unit_weights']),
+                                  cluster=~pid)
+      
+      bs.obs[2,2:5,i]<-weighted.event.study$coeftable[
+        paste('remote_work_treat:factor(year_doubles_dummy)',
+              time.list,sep=''),1]
+      
+      setup<-panel.matrices(subset(synth.dd.df.bs,year!=2020&year!=2021), unit='pid',time='year_doubles',
+                            outcome='resid_dep_var',
+                            treatment='treated')
+      tau.hat<-synthdid_estimate(setup$Y, setup$N0, setup$T0)
+      
+      bs.obs[2,1,i]<-tau.hat
+      
+    }
+    
+    new.data[4,'dd_est']<-sqrt(var(bs.obs[1,1,]))
+    for (j in seq(from=1,to=4,by=1)){
+      new.data[4,14+j]<-sqrt(var(bs.obs[1,j+1,]))
+    }
+    new.data[6,'dd_est']<-sqrt(var(bs.obs[2,1,]))
+    for (j in seq(from=1,to=4,by=1)){
+      new.data[6,14+j]<-sqrt(var(bs.obs[2,j+1,]))
+    }
+    
+    results.data.frame<-rbind(results.data.frame,
+                              new.data)
+    
+    new.data<-as.data.frame(matrix(nrow=2,ncol=24))
     colnames(new.data)<-
       c('sex','estimate','sample',
         'period_definition',
         'estimator','2014','2015','2016','2017',
-        '2018','2020','2021','2022',
+        '2018','2020','2021','2022','2023',
         '20142015','20162017',
         '20202021','20222023','dd_est',
         'N','pre_treat_mean','dependent_variable',
-        'pre_trend_p_value','subset') 
+        'pre_trend_p_value','subset')
+    
+    c.and.s<-att_gt(yname = 'dep_var',
+                    tname = 'year_doubles',
+                    idname = "pid",
+                    gname = 'first_treat_year_doubles',
+                    xformla = as.formula(form.subset[pop.subset]),,
+                    data = subset(synth.dd.df,sex<=s&
+                                    sex>=max(ceiling(s/2)-max(s-1,0),0)),
+                    allow_unbalanced_panel=TRUE
+    )
     
     new.data[,'sex']<-c('men','women','both')[s+1]
     new.data[,'subset']<-subset.list[pop.subset]
     new.data[,'estimate']<-c('point','se')
     new.data[,'sample']<-'balanced'
     new.data[,'period_definition']<-'year_doubles'
-    new.data[,'estimator']<-'synth_dd_contr'
+    new.data[,'estimator']<-'C&S_with_PS'
     new.data[,'dependent_variable']<-dep_var
-    new.data[,'pre_trend_p_value']<-F.test.weighted$`Pr(>Chisq)`[2]
     
-    new.data[1,match(time.list,colnames(new.data))]<-
-      weighted.event.study$coeftable[
-        paste('remote_work_treat:factor(year_doubles_dummy)',
-              time.list,sep=''),1]
-    new.data[2,match(time.list,colnames(new.data))]<-
-      weighted.event.study$coeftable[
-        paste('remote_work_treat:factor(year_doubles_dummy)',
-              time.list,sep=''),2]
+    new.data[,'pre_trend_p_value']<-c(c.and.s$Wpval,c.and.s$Wpval)
     
-    new.data[1,'dd_est']<-tau.hat
-    new.data[2,'dd_est']<-se
+    es <- aggte(c.and.s, type = "dynamic")
     
-    new.data[,'N']<-nrow(synth.dd.df)
-    new.data[,'pre_treat_mean']<-mean(subset(synth.dd.df,year<2020)[,'dep_var'])
+    new.data[1,match(time.list[1:length(es$att.egt)],colnames(new.data))]<-es$att.egt
+    new.data[2,match(time.list[1:length(es$att.egt)],colnames(new.data))]<-es$se.egt
+    
+    c.and.s<-att_gt(yname = 'dep_var',
+                    tname = 'year_doubles',
+                    idname = "pid",
+                    gname = 'first_treat_year_doubles',
+                    xformla = as.formula(form.subset[pop.subset]),,
+                    data = subset(synth.dd.df,sex<=s&
+                                    sex>=max(ceiling(s/2)-max(s-1,0),0),
+                                  year!=2020&year!=2021),
+                    allow_unbalanced_panel=TRUE
+    )
+    
+    es <- aggte(c.and.s, type = "dynamic")
+    
+    new.data[1,'dd_est']<-es$overall.att
+    new.data[2,'dd_est']<-es$overall.se
+    
+    new.data[,'N']<-sum(is.na(subset(synth.dd.df,
+                           my_mar_stat_2019_year>=0&
+                           has_kids_2019_year>=0&
+                           owns_home_2019_year>=0&
+                           education_2019_year>0&sex<=s&
+                          sex>=max(ceiling(s/2)-max(s-1,0),0))[,'dep_var'])==FALSE)
+    
+    pre.treat.vals<-subset(synth.dd.df,sex<=s&
+                             sex>=max(ceiling(s/2)-max(s-1,0),0)&
+                             year<2020&
+                             owns_home_2019_year>=0&
+                             education_2019_year>=0&
+                             my_mar_stat_2019_year>=0&
+                             has_kids_2019_year>=0)[,'dep_var']
+    
+    new.data[,'pre_treat_mean']<-
+      sum(pre.treat.vals[is.na(pre.treat.vals)==FALSE])/
+      length(pre.treat.vals[is.na(pre.treat.vals)==FALSE])
+    
     
     results.data.frame<-rbind(results.data.frame,
                               new.data)
@@ -1346,212 +1573,618 @@ for (dep_var in dependent.variables){
 }
 }
 }
-}
 
-#############################
-#loneliness results for unmarried people
-
-yr<-'year'
-pop.subset<-4
-
-for (dep_var in c("is_lonely","is_often_lonely")){
-  for (s in c(0,1,2)){
-    
-    df<-full_df
-    df_cs<-subset(df,my_mar_stat_2019_year==0)
-    
-    time.list<-sort(unique(df[is.na(df[,dep_var])==FALSE,yr]))
-    time.list<-time.list[substr(time.list,str_length(time.list)-3,
-                                str_length(time.list))!='2019']
-    
-    my.df<-subset(df,treated>=0&sex<=s&
-                    sex>=max(ceiling(s/2)-max(s-1,0),0))
-    colnames(my.df)[match(dep_var,colnames(my.df))]<-'dep_var'
-    my.df<-subset(my.df,dep_var>=0&treated>=0)
-    
-    my.df<-cbind(my.df,
-                 residualize_y('dep_var','year',my.df))
-    colnames(my.df)[ncol(my.df)]<-'resid_dep_var'
-    my.df<-my.df[is.na(my.df[,'resid_dep_var'])==FALSE,]
-    my.df<-subset(my.df,my_mar_stat_2019_year==0)
-    
-    pid.list<-get_people_in_1_year_balanced_panel(my.df)
-    synth.dd.df<-create_synth_dd_data_frame(pid.list,my.df)
-    synth.dd.df<-drop_multiples(synth.dd.df,'year')
-    
-new.data<-as.data.frame(matrix(nrow=2,ncol=23))
-colnames(new.data)<-
-  c('sex','estimate','sample',
-    'period_definition',
-    'estimator','2014','2015','2016','2017',
-    '2018','2020','2021','2022',
-    '20142015','20162017',
-    '20202021','20222023','dd_est',
-    'N','pre_treat_mean','dependent_variable',
-    'pre_trend_p_value','subset')
-
-c.and.s<-att_gt(yname = dep_var,
-                tname = yr,
-                idname = "pid",
-                gname = paste("first_treat_",yr,sep=''),
-                xformla = ~
-                  has_kids_2019_year+
-                  owns_home_2019_year+
-                  education_2019_yearis2+
-                  education_2019_yearis3+
-                  education_2019_yearis4+
-                  education_2019_yearis5+
-                  education_2019_yearis9,
-                data = subset(df_cs,sex<=s&
-                                sex>=max(ceiling(s/2)-max(s-1,0),0)&
-                                my_mar_stat_2019_year==0),
-                allow_unbalanced_panel=TRUE
-)
-
-new.data[,'sex']<-c('men','women','both')[s+1]
-new.data[,'subset']<-subset.list[pop.subset]
-new.data[,'estimate']<-c('point','se')
-new.data[,'sample']<-'unbalanced'
-new.data[,'period_definition']<-yr
-new.data[,'estimator']<-'C&S_with_PS'
-new.data[,'dependent_variable']<-dep_var
-new.data[,'pre_trend_p_value']<-c(c.and.s$Wpval,c.and.s$Wpval)
-
-es <- aggte(c.and.s, type = "dynamic")
-
-new.data[1,match(time.list[1:length(es$att.egt)],colnames(new.data))]<-es$att.egt
-new.data[2,match(time.list[1:length(es$att.egt)],colnames(new.data))]<-es$se.egt
-
-new.data[1,'dd_est']<-es$overall.att
-new.data[2,'dd_est']<-es$overall.se
-
-new.data[,'N']<-sum(is.na(subset(df_cs,
-                                   has_kids_2019_year>=0&
-                                   owns_home_2019_year>=0&
-                                   education_2019_year>0&sex<=s&
-                                   sex>=max(ceiling(s/2)-max(s-1,0),0))[,dep_var])==FALSE)
-
-pre.treat.vals<-subset(df_cs,sex<=s&
-                         sex>=max(ceiling(s/2)-max(s-1,0),0)&
-                         year<2020&
-                         owns_home_2019_year>=0&
-                         education_2019_year>=0&
-                         my_mar_stat_2019_year>=0&
-                         has_kids_2019_year>=0)[,dep_var]
-
-new.data[,'pre_treat_mean']<-
-  sum(pre.treat.vals[is.na(pre.treat.vals)==FALSE])/
-  length(pre.treat.vals[is.na(pre.treat.vals)==FALSE])
-
-
-results.data.frame<-rbind(results.data.frame,
-                          new.data)
-
-#synth dd estimator
-setup<-panel.matrices(synth.dd.df, unit='pid',time='year',
-                      outcome='resid_dep_var',
-                      treatment='treated')
-tau.hat<-synthdid_estimate(setup$Y, setup$N0, setup$T0)
-se<-sqrt(vcov(tau.hat,'jackknife'))
-
-time.weights<-cbind(seq(from=2014,to=2019,by=1),  
-                    attributes(tau.hat)$weights$lambda)
-
-control.unit.weights<-
-  cbind(rownames(setup$W)[1:setup$N0],attributes(tau.hat)$weights$omega)
-
-unit.weight<-as.data.frame(
-  ifelse(is.na(match(synth.dd.df[,'pid'],control.unit.weights[,1])),
-         1/length(unique(subset(synth.dd.df,remote_work_treat==1)[,'pid'])),
-         control.unit.weights[match(synth.dd.df[,'pid'],control.unit.weights[,1]),2])
-)
-colnames(unit.weight)<-'unit_weights'
-times.weights<-as.data.frame(
-  ifelse(is.na(match(synth.dd.df[,'year'],time.weights[,1])),
-         1/length(unique(subset(synth.dd.df,year>2019)[,'year'])),
-         time.weights[match(synth.dd.df[,'year'],time.weights[,1]),2])
-)
-colnames(times.weights)<-'time_weights'
-synth.dd.df<-cbind(synth.dd.df,unit.weight,times.weights)
-
-weighted.event.study<-feols(dep_var~remote_work_treat*factor(year_dummy)|pid,
-                            data=synth.dd.df,weights=as.numeric(synth.dd.df[,'unit_weights']),
-                            cluster=~pid)
-
-F.test.weighted<-linearHypothesis(weighted.event.study, 
-                                  paste('remote_work_treat:factor(year_dummy)',
-                                        time.list[time.list<2019],
-                                        '=0',sep=''),white.adjust = "hc1")
-
-unweighted.event.study<-feols(dep_var~remote_work_treat*factor(year_dummy)|pid,
+for (dep_var in c("work_mostly_from_home","is_lonely","is_often_lonely")){
+      for (pop.subset in c(3,4,5,6)){
+      for (s in c(0,1,2)){
+      for (yr in c('year','year_doubles')){
+        
+        df<-as.data.frame(df.list[pop.subset])
+        
+        time.list<-sort(unique(df[is.na(df[,dep_var])==FALSE,yr]))
+        time.list<-time.list[substr(time.list,str_length(time.list)-3,
+                                    str_length(time.list))!='2019']
+        
+        ##############
+        #C&S with PSW#
+        ##############
+        
+        df_cs<-df
+        
+        new.data<-as.data.frame(matrix(nrow=2,ncol=24))
+        colnames(new.data)<-
+          c('sex','estimate','sample',
+            'period_definition',
+            'estimator','2014','2015','2016','2017',
+            '2018','2020','2021','2022','2023',
+            '20142015','20162017',
+            '20202021','20222023','dd_est',
+            'N','pre_treat_mean','dependent_variable',
+            'pre_trend_p_value','subset')
+        
+        c.and.s<-att_gt(yname = dep_var,
+                        tname = yr,
+                        idname = "pid",
+                        gname = paste("first_treat_",yr,sep=''),
+                        xformla = as.formula(form.subset[pop.subset]),
+                        data = subset(df_cs,sex<=s&
+                                        sex>=max(ceiling(s/2)-max(s-1,0),0)),
+                        allow_unbalanced_panel=TRUE
+        )
+        
+        new.data[,'sex']<-c('men','women','both')[s+1]
+        new.data[,'subset']<-subset.list[pop.subset]
+        new.data[,'estimate']<-c('point','se')
+        new.data[,'sample']<-'unbalanced'
+        new.data[,'period_definition']<-yr
+        new.data[,'estimator']<-'C&S_with_PS'
+        new.data[,'dependent_variable']<-dep_var
+        
+        if(dep_var!='use_remote_work_incl_nw'|pop.subset!=2){
+          new.data[,'pre_trend_p_value']<-c(c.and.s$Wpval,c.and.s$Wpval)
+        }
+        
+        
+        es <- aggte(c.and.s, type = "dynamic")
+        
+        new.data[1,match(time.list[1:length(es$att.egt)],colnames(new.data))]<-es$att.egt
+        new.data[2,match(time.list[1:length(es$att.egt)],colnames(new.data))]<-es$se.egt
+        
+        c.and.s<-att_gt(yname = dep_var,
+                        tname = yr,
+                        idname = "pid",
+                        gname = paste("first_treat_",yr,sep=''),
+                        xformla = as.formula(form.subset[pop.subset]),
+                        data = subset(df_cs,sex<=s&year!=2021&year!=2020&
+                                        sex>=max(ceiling(s/2)-max(s-1,0),0)),
+                        allow_unbalanced_panel=TRUE
+        )
+        
+        es <- aggte(c.and.s, type = "dynamic")
+        
+        new.data[1,'dd_est']<-es$overall.att
+        new.data[2,'dd_est']<-es$overall.se
+        
+        new.data[,'N']<-sum(is.na(subset(df_cs,my_mar_stat_2019_year>=0&
+                                           has_kids_2019_year>=0&
+                                           owns_home_2019_year>=0&
+                                           education_2019_year>0&sex<=s&
+                                           sex>=max(ceiling(s/2)-max(s-1,0),0))[,dep_var])==FALSE)
+        
+        pre.treat.vals<-subset(df_cs,sex<=s&
+                                 sex>=max(ceiling(s/2)-max(s-1,0),0)&
+                                 year<2020&
+                                 owns_home_2019_year>=0&
+                                 education_2019_year>=0&
+                                 my_mar_stat_2019_year>=0&
+                                 has_kids_2019_year>=0)[,dep_var]
+        
+        new.data[,'pre_treat_mean']<-
+          sum(pre.treat.vals[is.na(pre.treat.vals)==FALSE])/
+          length(pre.treat.vals[is.na(pre.treat.vals)==FALSE])
+        
+        
+        results.data.frame<-rbind(results.data.frame,
+                                  new.data)
+        
+      }
+        }
+      
+      s<-2
+      #synthetic dd results
+      
+      if(dep_var %in%
+         c("wkaut1","wkaut2",
+           "wkaut3","wkaut4",                
+           "wkaut5", "use_remote_work_incl_nw",
+           'low_autonomy_summary')==FALSE){
+        
+        ######################  
+        #1 year balanced panel
+        ######################
+        
+        time.list<-sort(unique(df[is.na(df[,dep_var])==FALSE,'year']))
+        time.list<-time.list[substr(time.list,str_length(time.list)-3,
+                                    str_length(time.list))!='2019']
+        
+        my.df<-subset(df,treated>=0&sex<=s&
+                        sex>=max(ceiling(s/2)-max(s-1,0),0))
+        colnames(my.df)[match(dep_var,colnames(my.df))]<-'dep_var'
+        my.df<-subset(my.df,dep_var>=0&treated>=0)
+        
+        pid.list<-get_people_in_1_year_balanced_panel(my.df)
+        synth.dd.df<-create_synth_dd_data_frame(pid.list,my.df)
+        synth.dd.df<-drop_multiples(synth.dd.df,'year')
+        
+        #store bootstraps here
+        bs.obs<-array(NA,c(2,9,50))
+        
+        #And results here
+        new.data<-as.data.frame(matrix(nrow=6,ncol=24))
+        colnames(new.data)<-
+          c('sex','estimate','sample',
+            'period_definition',
+            'estimator','2014','2015','2016','2017',
+            '2018','2020','2021','2022','2023',
+            '20142015','20162017',
+            '20202021','20222023','dd_est',
+            'N','pre_treat_mean','dependent_variable',
+            'pre_trend_p_value','subset') 
+        
+        new.data[,'sex']<-c('men','women','both')[s+1]
+        new.data[,'subset']<-subset.list[pop.subset]
+        new.data[,'estimate']<-c('point','se')
+        new.data[,'sample']<-'balanced'
+        new.data[,'period_definition']<-'year'
+        new.data[,'estimator']<-c('twfe','twfe','synth_dd','synth_dd',
+                                  'synth_dd_contr','synth_dd_contr')
+        new.data[,'dependent_variable']<-dep_var
+        new.data[1:2,'pre_treat_mean']<-mean(subset(synth.dd.df,year<2020)[,'dep_var'])
+        
+        setup<-panel.matrices(synth.dd.df, unit='pid',time='year',
+                              outcome='dep_var',treatment='treated')
+        tau.hat<-synthdid_estimate(setup$Y, setup$N0, setup$T0)
+        
+        time.weights<-cbind(seq(from=2014,to=2019,by=1),  
+                            attributes(tau.hat)$weights$lambda)
+        
+        control.unit.weights<-
+          cbind(rownames(setup$W)[1:setup$N0],attributes(tau.hat)$weights$omega)
+        
+        unit.weight<-as.data.frame(
+          ifelse(is.na(match(synth.dd.df[,'pid'],control.unit.weights[,1])),
+                 1/length(unique(subset(synth.dd.df,remote_work_treat==1)[,'pid'])),
+                 control.unit.weights[match(synth.dd.df[,'pid'],control.unit.weights[,1]),2])
+        )
+        colnames(unit.weight)<-'unit_weights'
+        times.weights<-as.data.frame(
+          ifelse(is.na(match(synth.dd.df[,'year'],time.weights[,1])),
+                 1/length(unique(subset(synth.dd.df,year>2019)[,'year'])),
+                 time.weights[match(synth.dd.df[,'year'],time.weights[,1]),2])
+        )
+        colnames(times.weights)<-'time_weights'
+        synth.dd.df<-cbind(synth.dd.df,unit.weight,times.weights)
+        
+        weighted.event.study<-feols(dep_var~remote_work_treat*factor(year_dummy)|pid,
+                                    data=synth.dd.df,weights=as.numeric(synth.dd.df[,'unit_weights']),
+                                    cluster=~pid)
+        
+        F.test.weighted<-linearHypothesis(weighted.event.study, 
+                                          paste('remote_work_treat:factor(year_dummy)',
+                                                time.list[time.list<2019],
+                                                '=0',sep=''),white.adjust = "hc1")
+        
+        weighted.dd<-feols(dep_var~remote_work_treat*(year>2019)|pid+year,
+                           data=subset(synth.dd.df,year!=2020&year!=2019),
+                           weights=as.numeric(subset(synth.dd.df,year!=2020&year!=2019)[,'unit_weights'])*
+                             as.numeric(subset(synth.dd.df,year!=2020&year!=2019)[,'time_weights']),
+                           cluster=~pid)
+        
+        setup<-panel.matrices(subset(synth.dd.df,year!=2020&year!=2021),
+                              unit='pid',time='year',
+                              outcome='dep_var',treatment='treated')
+        tau.hat<-synthdid_estimate(setup$Y, setup$N0, setup$T0)
+        
+        new.data[3,'dd_est']<-tau.hat
+        
+        new.data[3,6:13]<-coef(weighted.event.study)[paste('remote_work_treat:factor(year_dummy)',
+                                                           c(seq(from=2014,to=2018,by=1),seq(from=2020,to=2023,by=1)),sep='')]
+        new.data[3:4,'pre_trend_p_value']<-F.test.weighted$`Pr(>Chisq)`[2]
+        new.data[3:4,'pre_treat_mean']<-
+          sum(subset(synth.dd.df,year<2020)[,'dep_var']*
+                as.numeric(subset(synth.dd.df,year<2020)[,'unit_weights'])*
+                as.numeric(subset(synth.dd.df,year<2020)[,'time_weights']))/
+          sum(as.numeric(subset(synth.dd.df,year<2020)[,'unit_weights'])*
+                as.numeric(subset(synth.dd.df,year<2020)[,'time_weights']))
+        
+        unweighted.event.study<-feols(dep_var~remote_work_treat*factor(year_dummy)|pid,
+                                      data=synth.dd.df,cluster=~pid)
+        
+        F.test.unweighted<-linearHypothesis(unweighted.event.study, 
+                                            paste('remote_work_treat:factor(year_dummy)',
+                                                  time.list[time.list<2019],
+                                                  '=0',sep=''),
+                                            white.adjust = "hc1")
+        
+        unweighted.did<-feols(dep_var~treated|pid+year,
                               data=synth.dd.df,cluster=~pid)
-
-F.test.unweighted<-linearHypothesis(unweighted.event.study, 
-                                    paste('remote_work_treat:factor(year_dummy)',
-                                          time.list[time.list<2019],
-                                          '=0',sep=''),
-                                    white.adjust = "hc1")
-
-unweighted.did<-feols(dep_var~treated|pid+year,
-                      data=synth.dd.df,cluster=~pid)
-
-weighted.did<-feols(dep_var~treated|pid+year,
-                    data=synth.dd.df,cluster=~pid)
-
-new.data<-as.data.frame(matrix(nrow=2,ncol=23))
-colnames(new.data)<-
-  c('sex','estimate','sample',
-    'period_definition',
-    'estimator','2014','2015','2016','2017',
-    '2018','2020','2021','2022',
-    '20142015','20162017',
-    '20202021','20222023','dd_est',
-    'N','pre_treat_mean','dependent_variable',
-    'pre_trend_p_value','subset') 
-
-new.data[,'sex']<-c('men','women','both')[s+1]
-new.data[,'subset']<-subset.list[pop.subset]
-new.data[,'estimate']<-c('point','se')
-new.data[,'sample']<-'balanced'
-new.data[,'period_definition']<-'year'
-new.data[,'estimator']<-'synth_dd_contr'
-new.data[,'dependent_variable']<-dep_var
-new.data[,'pre_trend_p_value']<-F.test.unweighted$`Pr(>Chisq)`[2]
-
-new.data[1,match(time.list,colnames(new.data))]<-
-  unweighted.event.study$coeftable[paste('remote_work_treat:factor(year_dummy)',
-                                         c(time.list[time.list<2019],
-                                           seq(from=2020,to=2022,by=1)),sep=''),1]
-new.data[2,match(time.list,colnames(new.data))]<-
-  unweighted.event.study$coeftable[paste('remote_work_treat:factor(year_dummy)',
-                                         c(time.list[time.list<2019],
-                                           seq(from=2020,to=2022,by=1)),sep=''),2]
-
-new.data[1,'dd_est']<-unweighted.did$coeftable['treated',1]
-new.data[2,'dd_est']<-unweighted.did$coeftable['treated',2]
-
-new.data[,'N']<-nrow(synth.dd.df)
-new.data[,'pre_treat_mean']<-mean(subset(synth.dd.df,year<2020)[,'dep_var'])
-
-results.data.frame<-rbind(results.data.frame,
-                          new.data)
-
-
+        
+        new.data[1,'dd_est']<-coef(unweighted.did)[1]
+        new.data[1,6:13]<-coef(unweighted.event.study)[paste('remote_work_treat:factor(year_dummy)',
+                                                             c(seq(from=2014,to=2018,by=1),seq(from=2020,to=2022,by=1)),sep='')]
+        new.data[1:2,'pre_trend_p_value']<-F.test.unweighted$`Pr(>Chisq)`[2]
+        
+        my.df<-cbind(my.df,
+                     residualize_y('dep_var','year',my.df,pop.subset))
+        colnames(my.df)[ncol(my.df)]<-'resid_dep_var'
+        my.df<-my.df[is.na(my.df[,'resid_dep_var'])==FALSE,]
+        
+        synth.dd.df<-create_synth_dd_data_frame(pid.list,my.df)
+        synth.dd.df<-drop_multiples(synth.dd.df,'year')
+        
+        setup<-panel.matrices(synth.dd.df, unit='pid',time='year',
+                              outcome='resid_dep_var',
+                              treatment='treated')
+        tau.hat<-synthdid_estimate(setup$Y, setup$N0, setup$T0)
+        
+        time.weights<-cbind(seq(from=2014,to=2019,by=1),  
+                            attributes(tau.hat)$weights$lambda)
+        
+        control.unit.weights<-
+          cbind(rownames(setup$W)[1:setup$N0],attributes(tau.hat)$weights$omega)
+        
+        unit.weight<-as.data.frame(
+          ifelse(is.na(match(synth.dd.df[,'pid'],control.unit.weights[,1])),
+                 1/length(unique(subset(synth.dd.df,remote_work_treat==1)[,'pid'])),
+                 control.unit.weights[match(synth.dd.df[,'pid'],control.unit.weights[,1]),2])
+        )
+        colnames(unit.weight)<-'unit_weights'
+        times.weights<-as.data.frame(
+          ifelse(is.na(match(synth.dd.df[,'year'],time.weights[,1])),
+                 1/length(unique(subset(synth.dd.df,year>2019)[,'year'])),
+                 time.weights[match(synth.dd.df[,'year'],time.weights[,1]),2])
+        )
+        colnames(times.weights)<-'time_weights'
+        synth.dd.df<-cbind(synth.dd.df,unit.weight,times.weights)
+        
+        weighted.event.study<-feols(resid_dep_var~remote_work_treat*factor(year_dummy)|pid,
+                                    data=synth.dd.df,weights=as.numeric(synth.dd.df[,'unit_weights']),
+                                    cluster=~pid)
+        
+        F.test.weighted<-linearHypothesis(weighted.event.study, 
+                                          paste('remote_work_treat:factor(year_dummy)',
+                                                time.list[time.list<2019],
+                                                '=0',sep=''),white.adjust = "hc1")
+        
+        new.data[5,6:13]<-coef(weighted.event.study)[paste('remote_work_treat:factor(year_dummy)',
+                                                           c(seq(from=2014,to=2018,by=1),seq(from=2020,to=2022,by=1)),sep='')]
+        
+        new.data[5:6,'pre_trend_p_value']<-F.test.weighted$`Pr(>Chisq)`[2]
+        
+        new.data[5:6,'pre_treat_mean']<-
+          sum(subset(synth.dd.df,year<2020)[,'dep_var']*
+                as.numeric(subset(synth.dd.df,year<2020)[,'unit_weights'])*
+                as.numeric(subset(synth.dd.df,year<2020)[,'time_weights']))/
+          sum(as.numeric(subset(synth.dd.df,year<2020)[,'unit_weights'])*
+                as.numeric(subset(synth.dd.df,year<2020)[,'time_weights']))
+        
+        setup<-panel.matrices(subset(synth.dd.df,year!=2020&year!=2021), unit='pid',time='year',
+                              outcome='resid_dep_var',
+                              treatment='treated')
+        tau.hat<-synthdid_estimate(setup$Y, setup$N0, setup$T0)
+        
+        new.data[5,'dd_est']<-tau.hat
+        
+        #bootstrap for standard errors
+        for (i in seq(from=1,to=50,by=1)){
+          
+          #draw pids
+          pid.bs<-sample(unique(synth.dd.df[,'pid']),length(unique(synth.dd.df[,'pid'])),
+                         replace=TRUE)
+          
+          time.periods<-sort(unique(synth.dd.df[,'year']))
+          
+          synth.dd.df.bs<-synth.dd.df[match(interaction(sort(rep(pid.bs,length(time.periods))),time.periods),
+                                            interaction(synth.dd.df[,'pid'],
+                                                        synth.dd.df[,'year'])),]
+          
+          while(sum(synth.dd.df.bs[(length(time.periods)+1):nrow(synth.dd.df.bs),'pid']==
+                    synth.dd.df.bs[1:(nrow(synth.dd.df.bs)-length(time.periods)),'pid'])>0){
+            
+            #redefine duplicates
+            synth.dd.df.bs[(length(time.periods)+1):nrow(synth.dd.df.bs),'pid']<-
+              ifelse(synth.dd.df.bs[(length(time.periods)+1):nrow(synth.dd.df.bs),'pid']==
+                       synth.dd.df.bs[1:(nrow(synth.dd.df.bs)-length(time.periods)),'pid'],
+                     synth.dd.df.bs[(length(time.periods)+1):nrow(synth.dd.df.bs),'pid']-1,
+                     synth.dd.df.bs[(length(time.periods)+1):nrow(synth.dd.df.bs),'pid'])
+            
+            pid.bs<-sort(unique(synth.dd.df.bs[,'pid']))
+            
+            synth.dd.df.bs<-synth.dd.df.bs[match(interaction(sort(rep(pid.bs,length(time.periods))),
+                                                             time.periods),
+                                                 interaction(synth.dd.df.bs[,'pid'],
+                                                             synth.dd.df.bs[,'year'])),]
+            
+          }
+          
+          synth.dd.df.bs<-cbind(synth.dd.df.bs,
+                                residualize_y('dep_var','year',synth.dd.df.bs, pop.subset))
+          colnames(synth.dd.df.bs)[ncol(synth.dd.df.bs)]<-'resid_dep_var_bs'
+          
+          setup<-panel.matrices(synth.dd.df.bs, unit='pid',time='year',
+                                outcome='resid_dep_var_bs',treatment='treated')
+          tau.hat<-synthdid_estimate(setup$Y, setup$N0, setup$T0)
+          
+          time.weights<-cbind(seq(from=2014,to=2019,by=1),  
+                              attributes(tau.hat)$weights$lambda)
+          
+          control.unit.weights<-
+            cbind(rownames(setup$W)[1:setup$N0],attributes(tau.hat)$weights$omega)
+          
+          unit.weight<-as.data.frame(
+            ifelse(is.na(match(synth.dd.df.bs[,'pid'],control.unit.weights[,1])),
+                   1/length(unique(subset(synth.dd.df.bs,remote_work_treat==1)[,'pid'])),
+                   control.unit.weights[match(synth.dd.df.bs[,'pid'],control.unit.weights[,1]),2])
+          )
+          colnames(unit.weight)<-'unit_weights'
+          times.weights<-as.data.frame(
+            ifelse(is.na(match(synth.dd.df.bs[,'year'],time.weights[,1])),
+                   1/length(unique(subset(synth.dd.df.bs,year>2019)[,'year'])),
+                   time.weights[match(synth.dd.df.bs[,'year'],time.weights[,1]),2])
+          )
+          colnames(times.weights)<-'time_weights'
+          synth.dd.df.bs[,'unit_weights']<-unit.weight[,'unit_weights']
+          synth.dd.df.bs[,'time_weights']<-times.weights[,'time_weights']
+          
+          
+          weighted.event.study<-feols(resid_dep_var_bs~remote_work_treat*factor(year_dummy)|pid,
+                                      data=synth.dd.df.bs,
+                                      weights=as.numeric(synth.dd.df.bs[,'unit_weights']),
+                                      cluster=~pid)
+          
+          bs.obs[1,2:9,i]<-coef(weighted.event.study)[paste('remote_work_treat:factor(year_dummy)',
+                                                            c(seq(from=2014,to=2018,by=1),
+                                                              seq(from=2020,to=2022,by=1)),sep='')]
+          
+          setup<-panel.matrices(subset(synth.dd.df.bs,year!=2020&year!=2021), unit='pid',time='year',
+                                outcome='resid_dep_var_bs',treatment='treated')
+          tau.hat<-synthdid_estimate(setup$Y, setup$N0, setup$T0)
+          
+          bs.obs[1,1,i]<-tau.hat
+          
+          setup<-panel.matrices(synth.dd.df.bs, unit='pid',time='year',
+                                outcome='resid_dep_var_bs',
+                                treatment='treated')
+          tau.hat<-synthdid_estimate(setup$Y, setup$N0, setup$T0)
+          
+          time.weights<-cbind(seq(from=2014,to=2019,by=1),  
+                              attributes(tau.hat)$weights$lambda)
+          
+          control.unit.weights<-
+            cbind(rownames(setup$W)[1:setup$N0],attributes(tau.hat)$weights$omega)
+          
+          unit.weight<-as.data.frame(
+            ifelse(is.na(match(synth.dd.df.bs[,'pid'],control.unit.weights[,1])),
+                   1/length(unique(subset(synth.dd.df.bs,remote_work_treat==1)[,'pid'])),
+                   control.unit.weights[match(synth.dd.df.bs[,'pid'],control.unit.weights[,1]),2])
+          )
+          colnames(unit.weight)<-'unit_weights'
+          times.weights<-as.data.frame(
+            ifelse(is.na(match(synth.dd.df.bs[,'year'],time.weights[,1])),
+                   1/length(unique(subset(synth.dd.df.bs,year>2019)[,'year'])),
+                   time.weights[match(synth.dd.df.bs[,'year'],time.weights[,1]),2])
+          )
+          colnames(times.weights)<-'time_weights'
+          
+          synth.dd.df.bs[,'unit_weights']<-unit.weight[,'unit_weights']
+          synth.dd.df.bs[,'time_weights']<-times.weights[,'time_weights']
+          
+          weighted.event.study<-feols(resid_dep_var_bs~remote_work_treat*factor(year_dummy)|pid,
+                                      data=synth.dd.df.bs,
+                                      weights=as.numeric(synth.dd.df.bs[,'unit_weights']),
+                                      cluster=~pid)
+          
+          bs.obs[2,2:9,i]<-coef(weighted.event.study)[paste('remote_work_treat:factor(year_dummy)',
+                                                            c(seq(from=2014,to=2018,by=1),
+                                                              seq(from=2020,to=2022,by=1)),sep='')]
+          
+          setup<-panel.matrices(subset(synth.dd.df.bs,year!=2020&year!=2021),
+                                unit='pid',time='year',
+                                outcome='resid_dep_var_bs',
+                                treatment='treated')
+          tau.hat<-synthdid_estimate(setup$Y, setup$N0, setup$T0)
+          
+          bs.obs[2,1,i]<-tau.hat
+          
+          
+        }
+        
+        new.data[4,'dd_est']<-sqrt(var(bs.obs[1,1,]))
+        for (j in seq(from=1,to=8,by=1)){
+          new.data[4,5+j]<-sqrt(var(bs.obs[1,j+1,]))
+        }
+        new.data[6,'dd_est']<-sqrt(var(bs.obs[2,1,]))
+        for (j in seq(from=1,to=8,by=1)){
+          new.data[6,5+j]<-sqrt(var(bs.obs[2,j+1,]))
+        }
+        
+        new.data[,'N']<-nrow(synth.dd.df)
+        
+        results.data.frame<-rbind(results.data.frame,
+                                  new.data)
+        
+        
+        #create dummies for control variable values
+        for (j in unique(synth.dd.df[,'control_variable_2019_year'])){
+          new.var<-as.data.frame(as.numeric(synth.dd.df[,'control_variable_2019_year']==j))
+          colnames(new.var)<-paste('control_equals',j,sep='')
+          synth.dd.df<-cbind(synth.dd.df,new.var)
+          
+        }
+        
+        cs.formula<-paste('~control_equals',unique(synth.dd.df[,'control_variable_2019_year'])[2],sep='')
+        for (i in seq(from=3,to=length(unique(synth.dd.df[,'control_variable_2019_year'])),by=1)){
+          
+          cs.formula<-paste(cs.formula,'+control_equals',unique(synth.dd.df[,'control_variable_2019_year'])[2],sep='')
+          
+        }
+        
+        
+        new.data<-as.data.frame(matrix(nrow=2,ncol=24))
+        colnames(new.data)<-
+          c('sex','estimate','sample',
+            'period_definition',
+            'estimator','2014','2015','2016','2017',
+            '2018','2020','2021','2022','2023',
+            '20142015','20162017',
+            '20202021','20222023','dd_est',
+            'N','pre_treat_mean','dependent_variable',
+            'pre_trend_p_value','subset')
+        
+        c.and.s<-att_gt(yname = 'dep_var',
+                        tname = 'year',
+                        idname = "pid",
+                        gname = 'first_treat_year',
+                        xformla = as.formula(cs.formula),
+                        data = subset(synth.dd.df,sex<=s&
+                                        sex>=max(ceiling(s/2)-max(s-1,0),0)),
+                        allow_unbalanced_panel=TRUE
+        )
+        
+        new.data[,'sex']<-c('men','women','both')[s+1]
+        new.data[,'subset']<-subset.list[pop.subset]
+        new.data[,'estimate']<-c('point','se')
+        new.data[,'sample']<-'balanced'
+        new.data[,'period_definition']<-yr
+        new.data[,'estimator']<-'C&S_with_PS'
+        new.data[,'dependent_variable']<-dep_var
+        
+        new.data[,'pre_trend_p_value']<-c(c.and.s$Wpval,c.and.s$Wpval)
+        
+        es <- aggte(c.and.s, type = "dynamic")
+        
+        new.data[1,match(time.list[1:length(es$att.egt)],colnames(new.data))]<-es$att.egt
+        new.data[2,match(time.list[1:length(es$att.egt)],colnames(new.data))]<-es$se.egt
+        
+        new.data[,'N']<-sum(is.na(subset(synth.dd.df,
+                                         my_mar_stat_2019_year>=0&
+                                           has_kids_2019_year>=0&
+                                           owns_home_2019_year>=0&
+                                           education_2019_year>0&sex<=s&
+                                           sex>=max(ceiling(s/2)-max(s-1,0),0))[,'dep_var'])==FALSE)
+        
+        pre.treat.vals<-subset(synth.dd.df,sex<=s&
+                                 sex>=max(ceiling(s/2)-max(s-1,0),0)&
+                                 year<2020&
+                                 owns_home_2019_year>=0&
+                                 education_2019_year>=0&
+                                 my_mar_stat_2019_year>=0&
+                                 has_kids_2019_year>=0)[,'dep_var']
+        
+        new.data[,'pre_treat_mean']<-
+          sum(pre.treat.vals[is.na(pre.treat.vals)==FALSE])/
+          length(pre.treat.vals[is.na(pre.treat.vals)==FALSE])
+        
+        c.and.s<-att_gt(yname = 'dep_var',
+                        tname = 'year',
+                        idname = "pid",
+                        gname = 'first_treat_year',
+                        xformla = as.formula(cs.formula),
+                        data = subset(synth.dd.df,sex<=s&
+                                        sex>=max(ceiling(s/2)-max(s-1,0),0)&
+                                        year!=2020&year!=2021),
+                        allow_unbalanced_panel=TRUE
+        )
+        
+        es <- aggte(c.and.s, type = "dynamic")
+        
+        new.data[1,'dd_est']<-es$overall.att
+        new.data[2,'dd_est']<-es$overall.se
+        
+        
+        results.data.frame<-rbind(results.data.frame,
+                                  new.data)
+        
+      }
+    write.csv(results.data.frame,'incomplete_results_working_age.CSV')
+  }
 }
+
+setwd(output.directory)
+write.csv(results.data.frame,'all_results_working_age_sub_test.CSV')
+
+placebo.vars<-c('sex','white','is_lonely_2019_year',
+  'is_often_lonely_2019_year',
+  'GHQ12_caseness_2019_year',
+  'anxiety_and_depression_2019_year',
+  'loss_of_confidence_2019_year',
+  'social_dysfunction_2019_year',
+  'high_caseness_2019_year',
+  'SF12_mh_2019_year',
+  'my_mar_stat_2019_year',
+  'has_kids_2019_year',
+  'new_educ_2019_yearis1',
+  'new_educ_2019_yearis3')
+
+placebo.tests<-matrix(ncol=length(placebo.vars),nrow=5)
+
+form.subset.dem<-c("~my_mar_stat_2019_yearis1+has_kids_2019_year+owns_home_2019_year+new_educ_2019_yearis2+new_educ_2019_yearis3",
+                   "~my_mar_stat_2019_yearis1+has_kids_2019_year+owns_home_2019_year+new_educ_2019_yearis2+new_educ_2019_yearis3",
+                   "~my_mar_stat_2019_yearis1+has_kids_2019_year+owns_home_2019_year+new_educ_2019_yearis2+new_educ_2019_yearis3",
+                   "~my_mar_stat_2019_yearis1+has_kids_2019_year+owns_home_2019_year+new_educ_2019_yearis2+new_educ_2019_yearis3",
+                   "~my_mar_stat_2019_yearis1+has_kids_2019_year+owns_home_2019_year+new_educ_2019_yearis2+new_educ_2019_yearis3",
+                   "~my_mar_stat_2019_yearis1+has_kids_2019_year+owns_home_2019_year+new_educ_2019_yearis2+new_educ_2019_yearis3",
+                   "~my_mar_stat_2019_yearis1+has_kids_2019_year+owns_home_2019_year+new_educ_2019_yearis2+new_educ_2019_yearis3",
+                   "~my_mar_stat_2019_yearis1+has_kids_2019_year+owns_home_2019_year+new_educ_2019_yearis2+new_educ_2019_yearis3",
+                   "~my_mar_stat_2019_yearis1+has_kids_2019_year+owns_home_2019_year+new_educ_2019_yearis2+new_educ_2019_yearis3",
+                   "~my_mar_stat_2019_yearis1+has_kids_2019_year+owns_home_2019_year+new_educ_2019_yearis2+new_educ_2019_yearis3",
+                   "~has_kids_2019_year+owns_home_2019_year+new_educ_2019_yearis2+new_educ_2019_yearis3",
+                   "~my_mar_stat_2019_yearis1+owns_home_2019_year+new_educ_2019_yearis2+new_educ_2019_yearis3",
+                   "~my_mar_stat_2019_yearis1+has_kids_2019_year+owns_home_2019_year",
+                   "~my_mar_stat_2019_yearis1+has_kids_2019_year+owns_home_2019_year")
+
+df<-as.data.frame(df.list[1])
+new_educ_2019_yearis1<-as.data.frame(ifelse(df[,'new_educ_2019_yearis2']==0&
+                                df[,'new_educ_2019_yearis3']==0,1,0))
+colnames(new_educ_2019_yearis1)<-'new_educ_2019_yearis1'
+df<-cbind(df,new_educ_2019_yearis1)
+
+#regressing demographics on treatment:
+for (dep_var in placebo.vars){
+  
+  yr<-'year'
+  
+  c.and.s<-att_gt(yname = dep_var,
+                  tname = yr,
+                  idname = "pid",
+                  gname = paste("first_treat_",yr,sep=''),
+                  xformla = as.formula(form.subset.dem[match(dep_var,
+                                                             placebo.vars)]),
+                  data = subset(df,year!=2020&year!=2021),
+                  allow_unbalanced_panel=TRUE
+  )
+  
+  es <- aggte(c.and.s, type = "dynamic")
+  
+  col.no<-match(dep_var,
+                placebo.vars)
+  
+  placebo.tests[1,col.no]<-es$overall.att
+  placebo.tests[2,col.no]<-es$overall.se
+  placebo.tests[3,col.no]<-
+    sum(is.na(subset(df,year!=2020&year!=2021&
+                     my_mar_stat_2019_year>=0&
+                       has_kids_2019_year>=0&
+                       owns_home_2019_year>=0&
+                       education_2019_year>0)[,dep_var])==FALSE)
+  placebo.tests[4,col.no]<-c.and.s$Wpval
+  placebo.tests[5,col.no]<-
+    sum(subset(df,year!=2020&year!=2021&
+                     my_mar_stat_2019_year>=0&
+                       has_kids_2019_year>=0&
+                       owns_home_2019_year>=0&
+                       education_2019_year>0)[,dep_var]
+        [is.na(subset(df,year!=2020&year!=2021&
+                      my_mar_stat_2019_year>=0&
+                        has_kids_2019_year>=0&
+                        owns_home_2019_year>=0&
+                        education_2019_year>0)[,dep_var])==FALSE])/
+    sum(is.na(subset(df,year!=2020&year!=2021&
+                     my_mar_stat_2019_year>=0&
+                       has_kids_2019_year>=0&
+                       owns_home_2019_year>=0&
+                       education_2019_year>0)[,dep_var])==FALSE)
+  
 }
 
-setwd('C:\\Users\\zvh514\\OneDrive - University of York\\Documents\\remote_work')
-write.csv(results.data.frame,'all_results_v2.CSV')
-
-subset(results.data.frame,estimator%in%c('synth_dd_contr')&subset=='all'&dependent_variable=='use_remote_work_incl_nw')
-
-
+#stargazer(placebo.tests[,1:7],out='Table4')
+#stargazer(placebo.tests[,8:14],out='Table4')
 
 #############################
 #propensity score weightings#
 #############################
 
-setwd('C:\\Users\\zvh514\\OneDrive - University of York\\Documents\\remote_work\\output_charts')
+setwd(output.directory)
 
 dependent.variables.names<-
   c("GHQ12_caseness","anxiety_and_depression","loss_of_confidence",     
@@ -1560,47 +2193,44 @@ dependent.variables.names<-
     "low autonomy, hours","low_autonomy_summary","job_satisfaction",       
     "high_job_satisfaction","high_caseness","use_remote_work",
     "is_lonely",'is_often_lonely',"employed","unemployed",             
-    "retired", "cares","cares_intensively")
-
-colnames(full_df)
+    "retired", "cares","cares_intensively",'work_mostly_from_home')
 
 setEPS(width=10,height=10)
-postscript('ps_weighting_1.eps')
+postscript('FigureC1.eps')
 par(mar=c(4,2,2,2),mfrow=c(3,3))
-for (dep_var in c("use_remote_work_incl_nw","GHQ12_caseness","anxiety_and_depression","loss_of_confidence","social_dysfunction","SF12_mh",
+for (dep_var in c("work_mostly_from_home","GHQ12_caseness","anxiety_and_depression","loss_of_confidence","social_dysfunction","SF12_mh",
                   "job_satisfaction","high_job_satisfaction" ,"high_caseness")){
 
 my.formula<-paste(dep_var,'~factor(year)*remote_work_treat',sep='')  
   
-plot.data<-matrix(nrow=3,ncol=4)
+plot.data<-matrix(nrow=4,ncol=4)
 
 event.study.ghq12<-lm(as.formula(my.formula),
    data=full_df)
 
-plot.data[,1]<-coef(event.study.ghq12)[1]+coef(event.study.ghq12)[paste('factor(year)',seq(from=2020,to=2022),sep='')]
+plot.data[,1]<-coef(event.study.ghq12)[1]+coef(event.study.ghq12)[paste('factor(year)',seq(from=2020,to=2023),sep='')]
 plot.data[,2]<-coef(event.study.ghq12)[1]+coef(event.study.ghq12)['remote_work_treat']+
-  coef(event.study.ghq12)[paste('factor(year)',seq(from=2020,to=2022),sep='')]+
-  coef(event.study.ghq12)[paste('factor(year)',seq(from=2020,to=2022),':remote_work_treat',sep='')]
+  coef(event.study.ghq12)[paste('factor(year)',seq(from=2020,to=2023),sep='')]+
+  coef(event.study.ghq12)[paste('factor(year)',seq(from=2020,to=2023),':remote_work_treat',sep='')]
 
 event.study.ghq12<-lm(as.formula(my.formula),
                       data=full_df,weights=1/full_df[,'p_observed'])
 
-plot.data[,3]<-coef(event.study.ghq12)[1]+coef(event.study.ghq12)[paste('factor(year)',seq(from=2020,to=2022),sep='')]
+plot.data[,3]<-coef(event.study.ghq12)[1]+coef(event.study.ghq12)[paste('factor(year)',seq(from=2020,to=2023),sep='')]
 plot.data[,4]<-coef(event.study.ghq12)[1]+coef(event.study.ghq12)['remote_work_treat']+
-  coef(event.study.ghq12)[paste('factor(year)',seq(from=2020,to=2022),sep='')]+
-  coef(event.study.ghq12)[paste('factor(year)',seq(from=2020,to=2022),':remote_work_treat',sep='')]
+  coef(event.study.ghq12)[paste('factor(year)',seq(from=2020,to=2023),sep='')]+
+  coef(event.study.ghq12)[paste('factor(year)',seq(from=2020,to=2023),':remote_work_treat',sep='')]
 
-plot(seq(from=2020,to=2022),plot.data[,1],
+plot(seq(from=2020,to=2023),plot.data[,1],
      type='o',ylab=' ',xlab='Year',main=str_replace_all(dependent.variables.names[match(dep_var,dependent.variables)],'_',' '),
      ylim=c(min(plot.data),max(plot.data)))
-lines(seq(from=2020,to=2022,by=1),
+lines(seq(from=2020,to=2023,by=1),
       plot.data[,2],
      type='o',col=2,pch=2)
 
-
-lines(seq(from=2020,to=2022,by=1),plot.data[,3],
+lines(seq(from=2020,to=2023,by=1),plot.data[,3],
      type='o',ylim=c(0,3),lty=2)
-lines(seq(from=2020,to=2022,by=1),
+lines(seq(from=2020,to=2023,by=1),
       plot.data[,4],
       type='o',col=2,lty=2,pch=2)
 
@@ -1611,7 +2241,7 @@ legend('bottomright',legend=c('untreated, unweighted','treated, unweighted',
 dev.off()
 
 setEPS(width=10,height=10)
-postscript('ps_weighting_2.eps')
+postscript('FigureC2.eps')
 par(mar=c(4,2,2,2),mfrow=c(4,3))
 for (dep_var in c("wkaut1","wkaut2","wkaut3",                 
                   "wkaut4","wkaut5","low_autonomy_summary","is_lonely",
@@ -1647,7 +2277,6 @@ for (dep_var in c("wkaut1","wkaut2","wkaut3",
         plot.data[,2],
         type='o',col=2,pch=2)
   
-  
   lines(seq(from=2020,to=2022,by=1),plot.data[,3],
         type='o',ylim=c(0,3),lty=2)
   lines(seq(from=2020,to=2022,by=1),
@@ -1659,57 +2288,6 @@ legend('bottomright',legend=c('untreated, unweighted','treated, unweighted',
                            'untreated, weighted','treated, ,weighted'),
        col=c(1,2,1,2),pch=c(1,2,1,2),lty=c(1,1,2,2))
 dev.off()
-
-es.unbalanced<-c(unlist(subset(results.data.frame,estimator=='C&S_with_PS'&
-         dependent_variable=='is_lonely'&
-         subset=='all'&
-         sex=='both'&
-         period_definition=='year')[1,seq(from=6,to=10,by=1)]),0,
-         unlist(subset(results.data.frame,estimator=='C&S_with_PS'&
-                  dependent_variable=='is_lonely'&
-                  subset=='all'&
-                  sex=='both'&
-                  period_definition=='year')[1,seq(from=11,to=13,by=1)]))
-es.balanced<-c(unlist(subset(results.data.frame,estimator=='C&S_with_PS'&
-                        dependent_variable=='is_lonely'&
-                        subset=='all'&
-                        sex=='both'&
-                        period_definition=='year')[3,seq(from=6,to=10,by=1)]),0,
-               unlist(subset(results.data.frame,estimator=='C&S_with_PS'&
-                               dependent_variable=='is_lonely'&
-                               subset=='all'&
-                               sex=='both'&
-                               period_definition=='year')[3,seq(from=11,to=13,by=1)]))
-
-plot(unlist(es.unbalanced),type='l',ylim=c(-0.2,0.2))
-lines(c(1,9),c(0,0))
-lines(unlist(es.balanced),col=2)
-
-es.unbalanced<-c(unlist(subset(results.data.frame,estimator=='C&S_with_PS'&
-                                 dependent_variable=='use_remote_work_incl_nw'&
-                                 subset=='all'&
-                                 sex=='both'&
-                                 period_definition=='year_doubles')[1,seq(from=6,to=10,by=1)]),0,
-                 unlist(subset(results.data.frame,estimator=='C&S_with_PS'&
-                                 dependent_variable=='GHQ12_caseness'&
-                                 subset=='all'&
-                                 sex=='both'&
-                                 period_definition=='year')[1,seq(from=11,to=13,by=1)]))
-es.balanced<-c(unlist(subset(results.data.frame,estimator=='C&S_with_PS'&
-                               dependent_variable=='GHQ12_caseness'&
-                               subset=='all'&
-                               sex=='both'&
-                               period_definition=='year')[3,seq(from=6,to=10,by=1)]),0,
-               unlist(subset(results.data.frame,estimator=='C&S_with_PS'&
-                               dependent_variable=='GHQ12_caseness'&
-                               subset=='all'&
-                               sex=='both'&
-                               period_definition=='year')[3,seq(from=11,to=13,by=1)]))
-
-plot(unlist(es.unbalanced),type='l',ylim=c(-0.2,0.2))
-lines(c(1,9),c(0,0))
-lines(unlist(es.balanced),col=2)
-
 
 #heterogeneity by personality test
 for (per.var in
@@ -1743,7 +2321,7 @@ dep.var.yr.key<-cbind(dependent.variables,
                         'year_doubles','year',
                         'year','year',
                         'year','year',
-                        'year'))
+                        'year','year','year'))
 
 per.list<-c("agreeableness",
   "conscientiousness",
@@ -1751,7 +2329,7 @@ per.list<-c("agreeableness",
   "neuroticism",
   "openness")
 
-setwd('C:\\Users\\zvh514\\OneDrive - University of York\\Documents\\remote_work\\output_charts')
+setwd(output.directory)
 #heterogeneity tests
 
 for (dep_var in dependent.variables){
@@ -1760,10 +2338,10 @@ for (dep_var in dependent.variables){
  
   eff.by.pers<-matrix(ncol=2,nrow=10)  
    
-
  for (per_var in per.list){
    for (high in c(0,1)){
    
+df<-subset(full_df,year!=2020&year!=2021)     
    
 c.and.s<-att_gt(yname = dep_var,
                 tname = yr,
@@ -1777,7 +2355,7 @@ c.and.s<-att_gt(yname = dep_var,
                   education_2019_yearis4+
                   education_2019_yearis5+
                   education_2019_yearis9,
-                data = full_df[full_df[,paste('high_',per_var,sep='')]==high,],
+                data = df[df[,paste('high_',per_var,sep='')]==high,],
                 allow_unbalanced_panel=TRUE
 )
 
@@ -1789,7 +2367,7 @@ eff.by.pers[2*(match(per_var,per.list)-1)+high+1,2]<-es$overall.se
 }
   
 setEPS(width=10,height=4)
-postscript(paste(dep_var,'_heterogeneity.eps',sep=''))
+postscript(paste(dep_var,'_heterogeneity_jl_cont.eps',sep=''))
 plot(seq(from=1,to=21,by=5),eff.by.pers[seq(from=1,to=9,by=2),1],
      ylim=c(min(eff.by.pers[,1]-1.96*eff.by.pers[,2]),
             max(eff.by.pers[,1]+1.96*eff.by.pers[,2])),
@@ -1823,91 +2401,3 @@ legend('topright',legend=c('low','high'),
        col=c(1,2),pch=c(1,2))
 dev.off()  
 }
-
-######################################################
-#worked examples of synthetic dd for job satisfaction#
-######################################################
-df<-full_df
-
-time.list<-sort(unique(df[is.na(df[,dep_var])==FALSE,yr]))
-time.list<-time.list[substr(time.list,str_length(time.list)-3,
-                            str_length(time.list))!='2019']
-
-my.df<-subset(df,treated>=0&sex<=s&
-                sex>=max(ceiling(s/2)-max(s-1,0),0))
-my.df<-subset(my.df,job_satisfaction>=0&treated>=0)
-
-my.df<-cbind(my.df,
-             residualize_y('job_satisfaction','year',my.df))
-colnames(my.df)[ncol(my.df)]<-'resid_dep_var'
-my.df<-my.df[is.na(my.df[,'resid_dep_var'])==FALSE,]
-
-pid.list<-get_people_in_1_year_balanced_panel(my.df)
-synth.dd.df<-create_synth_dd_data_frame(pid.list,my.df)
-synth.dd.df<-drop_multiples(synth.dd.df,'year')
-
-setup<-panel.matrices(synth.dd.df, unit='pid',time='year',
-                      outcome='resid_dep_var',
-                      treatment='treated')
-tau.hat<-synthdid_estimate(setup$Y, setup$N0, setup$T0)
-se<-sqrt(vcov(tau.hat,'jackknife'))
-
-control.unit.weights<-
-  cbind(rownames(setup$W)[1:setup$N0],attributes(tau.hat)$weights$omega)
-
-unit.weight<-as.data.frame(
-  ifelse(is.na(match(synth.dd.df[,'pid'],control.unit.weights[,1])),
-         1/length(unique(subset(synth.dd.df,remote_work_treat==1)[,'pid'])),
-         control.unit.weights[match(synth.dd.df[,'pid'],control.unit.weights[,1]),2])
-)
-colnames(unit.weight)<-'unit_weights'
-synth.dd.df<-cbind(synth.dd.df,unit.weight)
-
-weighted.event.study<-feols(resid_dep_var~remote_work_treat*factor(year_dummy)|pid,
-                            data=synth.dd.df,weights=as.numeric(synth.dd.df[,'unit_weights']),
-                            cluster=~pid)
-
-plot(seq(from=2014,to=2022,by=1),
-  c(weighted.event.study$coefficients[paste('remote_work_treat:factor(year_dummy)',
-                                        seq(from=2014,to=2018,by=1),sep='')],
-  0,
-  weighted.event.study$coefficients[paste('remote_work_treat:factor(year_dummy)',
-                                          seq(from=2020,to=2022,by=1),sep='')]),
-  type='o',ylim=c(-0.1,0.1),main='job satisfaction event studies',
-  xlab='year',ylab=' ')
-
-#Again with lower penalty
-synth.dd.df<-create_synth_dd_data_frame(pid.list,my.df)
-synth.dd.df<-drop_multiples(synth.dd.df,'year')
-
-setup<-panel.matrices(synth.dd.df, unit='pid',time='year',
-                      outcome='resid_dep_var',
-                      treatment='treated')
-tau.hat<-synthdid_estimate(setup$Y, setup$N0, setup$T0,eta.omega=0.5)
-se<-sqrt(vcov(tau.hat,'jackknife'))
-
-control.unit.weights<-
-  cbind(rownames(setup$W)[1:setup$N0],attributes(tau.hat)$weights$omega)
-
-unit.weight<-as.data.frame(
-  ifelse(is.na(match(synth.dd.df[,'pid'],control.unit.weights[,1])),
-         1/length(unique(subset(synth.dd.df,remote_work_treat==1)[,'pid'])),
-         control.unit.weights[match(synth.dd.df[,'pid'],control.unit.weights[,1]),2])
-)
-colnames(unit.weight)<-'unit_weights'
-synth.dd.df<-cbind(synth.dd.df,unit.weight)
-
-weighted.event.study<-feols(resid_dep_var~remote_work_treat*factor(year_dummy)|pid,
-                            data=synth.dd.df,weights=as.numeric(synth.dd.df[,'unit_weights']),
-                            cluster=~pid)
-
-points(seq(from=2014,to=2022,by=1),
-       c(weighted.event.study$coefficients[paste('remote_work_treat:factor(year_dummy)',
-                                                 seq(from=2014,to=2018,by=1),sep='')],
-         0,
-         weighted.event.study$coefficients[paste('remote_work_treat:factor(year_dummy)',
-                                                 seq(from=2020,to=2022,by=1),sep='')]),
-       type='o',col=3)
-
-legend('bottomleft',fill=c(1,3),
-       legend=c('high penalty','low penalty'))
