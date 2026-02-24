@@ -1,4 +1,9 @@
 rm(list=ls())
+set.seed(811072144)
+
+data.directory<-'Z:\\Projects\\remote_work\\UKDA-6931-stata\\stata\\stata13_se\\ukhls'
+output.directory<-'C:\\Users\\zvh514\\OneDrive - University of York\\Documents\\remote_work\\output_charts'
+
 library(fixest)
 library(lmtest)
 library(synthdid)
@@ -9,9 +14,8 @@ library(stargazer)
 #Load Data#
 ###########
 
-#setwd('\\\\storage.its.york.ac.uk\\che\\Projects\\remote_work\\UKDA-6931-stata\\stata\\stata13_se\\ukhls')
-setwd('Z:\\Projects\\remote_work\\UKDA-6931-stata\\stata\\stata13_se\\ukhls')
-full_df<-read.csv('US_data_remote_work_v2.CSV')
+setwd(data.directory)
+full_df<-read.csv('US_data_remote_work_v4.CSV')
 
 ###############
 #data cleaning#
@@ -42,7 +46,8 @@ vars.with.negatives<-
       'job_satisfaction',
       'wkaut1', 'wkaut2',
       'wkaut3','wkaut4',
-      'wkaut5')
+      'wkaut5','lonely','main_work_location')
+
 for (var in vars.with.negatives){
   full_df[,var]<-ifelse(full_df[,var]<0,NA,
                         full_df[,var])
@@ -65,13 +70,15 @@ offer.remote.work.incl.nw<-
 use.remote.work.incl.nw<-
   as.data.frame(ifelse(full_df[,"use_remote_work"]<0|full_df[,"offer_remote_work"]<=0,0,
                        full_df[,"use_remote_work"]))
+wmfh<-
+  as.data.frame(ifelse(full_df[,"main_work_location"]==1,1,0))
 
 colnames(offer.remote.work.incl.nw)<-'offer_remote_work_incl_nw'
 colnames(use.remote.work.incl.nw)<-'use_remote_work_incl_nw'
+colnames(wmfh)<-'work_mostly_from_home'
 
-full_df<-cbind(full_df,offer.remote.work.incl.nw,use.remote.work.incl.nw)
-
-#df<-subset(full_df,use_remote_work<0&offer_remote_work>=0)
+full_df<-cbind(full_df,offer.remote.work.incl.nw,use.remote.work.incl.nw,
+               wmfh)
 
 full_df[,"offer_remote_work"]<-
   ifelse(full_df[,"offer_remote_work"]<0,
@@ -152,23 +159,11 @@ new.educ<-as.data.frame(ifelse(full_df[,'education']<3,1,
                                       ifelse(full_df[,'education']>4,3,0))))
 colnames(new.educ)<-'new_educ'
 
-lockdown<-as.data.frame(
-  ifelse((full_df[,'month']==3&full_df[,'day']>22&full_df[,'year']==2020)|
-           (full_df[,'month']>3&full_df[,'month']<7&full_df[,'year']==2020)|
-           (full_df[,'month']==7&full_df[,'day']<4&full_df[,'year']==2020)|
-           (full_df[,'month']==11&full_df[,'day']>4&full_df[,'year']==2020)|
-           (full_df[,'month']==12&full_df[,'day']<2&full_df[,'year']==2020)|
-           (full_df[,'month']==1&full_df[,'day']>5&full_df[,'year']==2021)|
-           (full_df[,'month']>2&full_df[,'month']<4&full_df[,'year']==2021)|
-           (full_df[,'month']==4&full_df[,'day']<12&full_df[,'year']==2021),
-         1,0))
-colnames(lockdown)<-'lockdown'
-
 one.dig.occ<-as.data.frame(substr(full_df[,'occupation'],1,1))
 colnames(one.dig.occ)<-'one_dig_occ'
 
 full_df<-cbind(full_df,remote.work.treat,has.kids,my.mar.var,
-               white,owns.home,new.educ,lockdown,one.dig.occ)
+               white,owns.home,new.educ,one.dig.occ)
 
 #Add in year doubles
 year.double<-as.data.frame(
@@ -181,14 +176,19 @@ year.double<-as.data.frame(
 colnames(year.double)<-'year_doubles'
 full_df<-cbind(full_df,year.double)
 
-first.treat.yr<-as.data.frame(ifelse(full_df[,'remote_work_treat']==1,
-                                     2020,2025))
-colnames(first.treat.yr)<-'first_treat_year'
-first.treat.yr.double<-as.data.frame(ifelse(full_df[,'remote_work_treat']==1,
-                                            20202021,20242025))
-colnames(first.treat.yr.double)<-'first_treat_year_doubles'
-full_df<-cbind(full_df,first.treat.yr,first.treat.yr.double)
-
+#Create an all-purpose control variable
+my.control.reg<-lm(pid~factor(owns_home)+factor(my_mar_stat)+factor(new_educ)+
+                     factor(has_kids),
+                   data=full_df)
+control.variable<-as.data.frame(
+  coef(my.control.reg)[1]+
+    coef(my.control.reg)[2]*as.numeric(full_df[,'owns_home']==1)+
+    coef(my.control.reg)[3]*as.numeric(full_df[,'my_mar_stat']==1)+
+    coef(my.control.reg)[4]*as.numeric(full_df[,'new_educ']==2)+
+    coef(my.control.reg)[5]*as.numeric(full_df[,'new_educ']==3)+
+    coef(my.control.reg)[6]*as.numeric(full_df[,'has_kids']==1))
+colnames(control.variable)<-'control_variable'
+full_df<-cbind(full_df,control.variable)
 
 #allocate personality variables to each periods
 for (per.var in
@@ -215,7 +215,8 @@ for (var in
        "SF12_ph",
        "health_in_general",
        "commute_time","job_level",'owns_home','paid_work',
-       'education','one_dig_occ','marital_stat')){
+       'education','new_educ','one_dig_occ','marital_stat',
+       'my_mar_stat','control_variable')){
   
   df<-subset(full_df,year==2019)
   colnames(df)[match(var,colnames(df))]<-'this_var'
@@ -236,16 +237,22 @@ for (var in
 }
 
 #Need a first treat variable for C&S estimator
-first.treat<-as.data.frame(ifelse(full_df[,'remote_work_treat']==1,
-                                  2020,2025))
-colnames(first.treat)<-'first_treat'
-full_df<-cbind(full_df,first.treat)
+first.treat.yr<-as.data.frame(ifelse(full_df[,'remote_work_treat']==1,
+                                     2020,2025))
+colnames(first.treat.yr)<-'first_treat_year'
+first.treat.yr.double<-as.data.frame(ifelse(full_df[,'remote_work_treat']==1,
+                                            20202021,20242025))
+colnames(first.treat.yr.double)<-'first_treat_year_doubles'
+full_df<-cbind(full_df,first.treat.yr,first.treat.yr.double)
 
 for (var in c('has_kids_2019_year',
               'education_2019_year',
+              'new_educ_2019_year',
               'marital_stat_2019_year',
               'owns_home_2019_year',
-              'one_dig_occ_2019_year')){
+              'job_level_2019_year',
+              'one_dig_occ_2019_year',
+              'my_mar_stat_2019_year')){
   for (x in unique(full_df[,var])){
     
     new.var<-as.data.frame(
@@ -268,6 +275,14 @@ for (var in c('wkaut1','wkaut2','wkaut3',
   
 }
 
+overall.low.autonomy<-as.data.frame(full_df[,'wkaut1']+
+                                      full_df[,'wkaut2']+
+                                      full_df[,'wkaut3']+
+                                      full_df[,'wkaut4']+
+                                      full_df[,'wkaut5'])
+colnames(overall.low.autonomy)<-'low_autonomy_summary'
+full_df<-cbind(full_df,overall.low.autonomy)
+
 med.job.sat<-median(subset(full_df,job_satisfaction>=0)[,'job_satisfaction'])
 
 high.job.satisfaction<-as.data.frame(
@@ -277,77 +292,63 @@ colnames(high.job.satisfaction)<-'high_job_satisfaction'
 
 full_df<-cbind(full_df,high.job.satisfaction)
 
+is.v.lonely<-as.data.frame(ifelse(full_df[,'lonely']==3,1,0))
+colnames(is.v.lonely)<-'is_often_lonely'
 is.lonely<-as.data.frame(ifelse(full_df[,'lonely']==1,0,1))
 colnames(is.lonely)<-'is_lonely'
-very.lonely<-as.data.frame(ifelse(full_df[,'lonely']==3,1,0))
-colnames(very.lonely)<-'is_often_lonely'
+full_df<-cbind(full_df,is.lonely,is.v.lonely)
 
+cares<-as.data.frame(ifelse(full_df[,'care_hours']==(-8),0,
+                            ifelse(full_df[,'care_hours']>0,1,
+                                   NA)))
+cares.intensively<-as.data.frame(ifelse(full_df[,'care_hours']==(-8)|
+                                          full_df[,'care_hours']==1|
+                                          full_df[,'care_hours']==2,0,
+                                        ifelse(full_df[,'care_hours']>2,1,
+                                               NA)))
+colnames(cares)<-'cares'
+colnames(cares.intensively)<-'cares_intensively'
 
-full_df<-cbind(full_df,is.lonely,very.lonely)
+full_df<-cbind(full_df,cares,cares.intensively)
 
-#############################################################
-colnames(full_df)
-ghq12.sf12<-lm(SF12_mh~GHQ1+GHQ2+GHQ3+GHQ4+GHQ5+GHQ6+GHQ7+GHQ8+
-     GHQ9+GHQ10+GHQ11+GHQ12,data=full_df)
-plot(density(ghq12.sf12$residuals))
+#some employment variables
+employed<-as.data.frame(as.numeric(full_df[,'employment_stat']<3))
+unemployed<-as.data.frame(as.numeric(full_df[,'employment_stat']==3))
+retired<-as.data.frame(as.numeric(full_df[,'employment_stat']==4))
+colnames(employed)<-'employed'
+colnames(unemployed)<-'unemployed'
+colnames(retired)<-'retired'
+full_df<-cbind(full_df,employed,retired,unemployed)
 
-cor(subset(full_df,GHQ12_caseness>=0&
-              SF12_mh>=0)[,'GHQ12_caseness'],
-     subset(full_df,GHQ12_caseness>=0&
-              SF12_mh>=0)[,'SF12_mh'])
+#create a list of dependent variables
+dependent.variables<-c("GHQ12_caseness",                
+                       "anxiety_and_depression", "loss_of_confidence",
+                       "social_dysfunction", 'SF12_mh',
+                       'wkaut1','wkaut2','wkaut3','wkaut4','wkaut5',
+                       'low_autonomy_summary',
+                       'job_satisfaction','high_job_satisfaction',
+                       'high_caseness','use_remote_work_incl_nw',
+                       'is_lonely','is_often_lonely','employed',
+                       'unemployed','retired',
+                       'cares','cares_intensively',
+                       'work_mostly_from_home')
 
-#############################################################
-#attrition variables
-attrit.next.period<-as.data.frame(is.na(match(interaction(full_df[,'pid'],full_df[,'wave_number']),
-                                              interaction(full_df[,'pid'],full_df[,'wave_number']+1))))
-colnames(attrit.next.period)<-'attrit_next_period'
-full_df<-cbind(full_df,attrit.next.period)
+full_df[,'year']<-as.numeric(as.character(full_df[,'year']))
 
-#Is this an absorbing state?
-attritors<-as.data.frame(cbind(subset(full_df,attrit.next.period==1&year>0)[,'pid'],
-                               subset(full_df,attrit.next.period==1&year>0)[,'year']))
-colnames(attritors)<-c('pid','year')
+#######################################################
+#Include only those people who are working age in 2019#
+#######################################################
 
-attritors.prime<-as.data.frame(matrix(ncol=3,nrow=0))
-colnames(attritors.prime)<-c('pid','year','returns')
+working.age.people<-unique(subset(full_df,year==2019&age>21&age<65)[,'pid'])
+full_df<-subset(full_df,pid%in%working.age.people)
 
-#by year, find out if people ever come back
-for (yr in seq(from=2009,to=2023,by=1)){
-  
-  df<-subset(attritors,year==yr)
-  df1<-subset(full_df,year>yr)
-  
-  df<-cbind(df,is.na(match(df[,'pid'],df1[,'pid'])))
-  colnames(df)<-c('pid','year','returns')
-  
-  attritors.prime<-rbind(attritors.prime,df)
-  
-}
-
-#the share of attritors who ever come back
-1-sum(attritors.prime[,3])/nrow(attritors.prime)
-
-attrition.reg<-lm(attrit_next_period~GHQ12_caseness*remote_work_treat,
-                  data=subset(full_df,year<2023&year>2013))
-
-#Attrition over years
-attrition.by.year<-lm(attrit_next_period~factor(year),data=full_df)
-
-#setwd('C:\\Users\\zvh514\\OneDrive - University of York\\Documents\\remote_work\\output_charts')
-setEPS(width=8,height=(16/3))
-postscript('attrition_by_year.eps')
-par(mar=c(4,4,2,2),mfrow=c(1,1))
-barplot(coef(attrition.by.year)[1]+
-          coef(attrition.by.year)[paste('factor(year)',seq(from=2011,to=2023,by=1),sep='')],
-        names.arg=seq(from=2012,to=2024,by=1),xlab='Year',
-        main='Attrition by year',ylab='Share of people not in survey who were last period')
-dev.off()
+setwd(output.directory)
 
 ################
 #Summarize data#
 ################
-var.list<-c('age','sex','paid_work','offer_remote_work_incl_nw',
-            'use_remote_work_incl_nw','remote_work_treat',
+var.list<-c('age','sex','paid_work',
+            'work_mostly_from_home','remote_work_treat',
             'GHQ12_caseness',
             'anxiety_and_depression',
             'loss_of_confidence',
@@ -356,45 +357,13 @@ var.list<-c('age','sex','paid_work','offer_remote_work_incl_nw',
             'SF12_mh',
             'job_satisfaction','high_job_satisfaction',
             'is_lonely','is_often_lonely',
-            'wkaut1','wkaut2','wkaut3','wkaut4','wkaut5'
+            'wkaut1','wkaut2','wkaut3','wkaut4','wkaut5',
+            'low_autonomy_summary'
             )
 df<-subset(full_df,remote_work_treat>=0&paid_work_2019_year==1)
 pids.in.sample<-unique(subset(df,year==2019)[,'pid'])
 stargazer(df[,var.list],
-          out='summary_statistics')
-
-#mh by gender
-mean(subset(full_df,sex==0&GHQ12_caseness>=0)[,'GHQ12_caseness'])
-mean(subset(full_df,sex==1&GHQ12_caseness>=0)[,'GHQ12_caseness'])
-mean(subset(full_df,sex==0&SF12_mh>=0)[,'SF12_mh'])
-mean(subset(full_df,sex==1&SF12_mh>=0)[,'SF12_mh'])
-
-#remote working by gender
-mean(subset(full_df,sex==0&use_remote_work>=0&year>2019)[,'use_remote_work'])
-mean(subset(full_df,sex==1&use_remote_work>=0&year>2019)[,'use_remote_work'])
-mean(subset(full_df,sex==0&offer_remote_work>=0&year>2019)[,'offer_remote_work'])
-mean(subset(full_df,sex==1&offer_remote_work>=0&year>2019)[,'offer_remote_work'])
-
-png('dist_teleworkability.png')
-plot(density(subset(full_df,teleworkability_2019_occ>=0)
-             [,'teleworkability_2019_occ']),
-     main='Distribution of teleworkability')
-dev.off()
-
-dist.telework<-quantile(subset(full_df,teleworkability_2019_occ>=0)
-                        [,'teleworkability_2019_occ'],
-                        seq(from=0,to=1,length.out=100))
-
-setEPS(width=8,height=(16/3))
-postscript('cdf_workability.eps')
-par(mar=c(4,4,2,2))
-plot(dist.telework,seq(from=0,to=1,length.out=100),
-     main='CDF, teleworkability of 2019 jobs',type='l',xlab='Teleworkability',
-     ylab='Cumulative distribution')
-dev.off()
-
-table(full_df[,'teleworkability_2018_occ']>0.5,
-      full_df[,'teleworkability_2019_occ']>0.5)/nrow(full_df)
+          out='Table1')
 
 ################################################
 #Does teleworkability predict working remotely?#
@@ -409,13 +378,20 @@ p.use.remote<-lm(use_remote_work~remote_work_treat,
                                teleworkability_2019_occ>=0),
                  weights=weights)
 
+wfh.remote<-lm(work_mostly_from_home~remote_work_treat,
+                 data=subset(full_df,use_remote_work>=0&year==2019&
+                               teleworkability_2019_occ>=0),
+                 weights=weights)
+
+
 ########################################
 #Time trends
 remote.work.by.year.reg<-
-  lm(use_remote_work_incl_nw~factor(year)*factor(month),
-     data=subset(full_df,paid_work==1&year<2024))
+  lm(work_mostly_from_home~factor(year)*factor(month),
+     data=subset(full_df,paid_work==1&year<2025))
 
 month.year<-paste(c(seq(from=1,to=12,by=1),
+                    seq(from=1,to=12,by=1),
                     seq(from=1,to=12,by=1),
                     seq(from=1,to=12,by=1),
                     seq(from=1,to=12,by=1),
@@ -440,10 +416,12 @@ month.year<-paste(c(seq(from=1,to=12,by=1),
                     seq(from=2020,to=2020,length.out=13),
                     seq(from=2021,to=2021,length.out=13),
                     seq(from=2022,to=2022,length.out=13),
-                    seq(from=2023,to=2023,length.out=13))
+                    seq(from=2023,to=2023,length.out=13),
+                    seq(from=2024,to=2024,length.out=13))
 )
 
 month.list<-c(seq(from=1,to=12,by=1),
+              seq(from=1,to=12,by=1),
               seq(from=1,to=12,by=1),
               seq(from=1,to=12,by=1),
               seq(from=1,to=12,by=1),
@@ -469,12 +447,11 @@ year.list<-c(seq(from=2011,to=2011,length.out=12),
              seq(from=2020,to=2020,length.out=12),
              seq(from=2021,to=2021,length.out=12),
              seq(from=2022,to=2022,length.out=12),
-             seq(from=2023,to=2023,length.out=12))
+             seq(from=2023,to=2023,length.out=12),
+             seq(from=2024,to=2024,length.out=12))
 
-
-setwd('C:\\Users\\zvh514\\OneDrive - University of York\\Documents\\remote_work\\output_charts')
 setEPS(width=10,height=4)
-postscript('share_working_remotely.eps')
+postscript('Figure2.eps')
 par(mar=c(4,4,2,2),mfrow=c(1,1))
 plot(coef(remote.work.by.year.reg)[1]+
        coef(remote.work.by.year.reg)[paste('factor(year)',year.list,sep='')]+
@@ -486,8 +463,8 @@ plot(coef(remote.work.by.year.reg)[1]+
           year.list,':factor(month)',month.list,sep='')]),
      xaxt='n',
      type='o',
-     main='Share working remotely',xlab='Year',ylab='Share working remotely')
-axis(1, at=seq(from=1,to=12*13,by=12), labels=seq(from=2011,to=2023,by=1)) 
+     main='Share working mostly from home',xlab='Year',ylab=' ')
+axis(1, at=seq(from=1,to=12*14,by=12), labels=seq(from=2011,to=2024,by=1)) 
 dev.off()
 
 ########################################################
@@ -504,7 +481,8 @@ sum.vars<-c('age','sex','GHQ12_caseness',
             'my_mar_stat','white','owns_home',
             'job_satisfaction','high_job_satisfaction',
             'is_lonely','is_often_lonely',
-            'wkaut1','wkaut2','wkaut3','wkaut4','wkaut5'
+            'wkaut1','wkaut2','wkaut3','wkaut4','wkaut5',
+            'low_autonomy_summary'
 )
 summary.by.occ.type<-matrix(nrow=length(sum.vars),ncol=2)
 
@@ -562,7 +540,7 @@ rownames(summary.by.occ.type)<-
       'Scotland',
       "Northern Ireland"))
 colnames(summary.by.occ.type)<-c('Non-teleworkable','Teleworkable')
-stargazer(summary.by.occ.type,out='summary_by_occ_type')
+stargazer(summary.by.occ.type,out='Table2')
 
 ########################
 #Time series structure
@@ -570,10 +548,26 @@ stargazer(summary.by.occ.type,out='summary_by_occ_type')
 
 year.table<-table(full_df[,'year'])
 year.doubles.table<-table(subset(full_df,year_doubles>0)[,'year_doubles'])
-year.doubles.rw.table<-table(subset(full_df,year_doubles>0&use_remote_work_incl_nw>=0&year<2023)[,'year_doubles'])
+year.doubles.rw.table<-table(subset(full_df,year_doubles>0&use_remote_work_incl_nw>=0&year<2025)[,'year_doubles'])
 
 setEPS(width=10,height=4)
-postscript('year_year_pair_data.eps')
+postscript('Figure1.eps')
+par(mar=c(4,4,2,2),mfrow=c(1,1))
+plot(c(min(subset(full_df,wave_number==19&year>0)[,'year']),
+       max(subset(full_df,wave_number==19&year>0)[,'year'])),
+     c(1,1),xlim=c(2009,2025),type='l',ylim=c(1,15),
+     xlab='Years',ylab='UKHLS wave number',
+     main='Years covered by UKHLS waves')
+for (i in seq(from=2,to=15,by=1)){
+  lines(c(min(subset(full_df,wave_number==18+i&year>0)[,'year']),
+          max(subset(full_df,wave_number==18+i&year>0)[,'year'])),
+        c(i,i),
+        type='l')
+}
+dev.off()
+
+setEPS(width=10,height=4)
+postscript('FigureA1.eps')
 par(mar=c(4,2,2,2),mfrow=c(1,2))
 barplot(year.table,main='Observations by year')
 year.pair.plot<-barplot(year.doubles.table,main='Observations by year pair',xaxt='n')
@@ -586,11 +580,13 @@ axis(1,at=year.pair.plot,
 dev.off()
 
 year.by.wave<-as.matrix(table(full_df[,'wave_number'],full_df[,'year']))
-stargazer(year.by.wave)
 
 ############################
 #Raw data plot, remote work#
 ############################
+
+nrow(subset(full_df,work_mostly_from_home==1&use_remote_work_incl_nw==0))/
+  nrow(subset(full_df,use_remote_work_incl_nw==0))
 
 remote.work.treated.group<-
   aggregate(use_remote_work_incl_nw~year,
@@ -601,14 +597,42 @@ remote.work.untreated.group<-
             data=subset(full_df,remote_work_treat==0),
             FUN=mean)
 
+mostly.remote.work.treated.group<-
+  aggregate(work_mostly_from_home~year,
+            data=subset(full_df,remote_work_treat==1&use_remote_work_incl_nw>=0),
+            FUN=mean)
+mostly.remote.work.untreated.group<-
+  aggregate(work_mostly_from_home~year,
+            data=subset(full_df,remote_work_treat==0&use_remote_work_incl_nw>=0),
+            FUN=mean)
+
+table(subset(full_df,remote_work_treat==1&year>2019)[,'use_remote_work_incl_nw'],
+      subset(full_df,remote_work_treat==1&year>2019)[,'work_mostly_from_home'])
+
 setEPS(width=8,height=4)
-postscript('raw_data_plot_remote_working.eps')
+postscript('use_work_from_home_raw_data_plot.eps')
 par(mar=c(4,4,2,2),mfrow=c(1,1))
 plot(remote.work.treated.group[,1],remote.work.treated.group[,2],
-     ylab=' ',ylim=c(0,max(remote.work.treated.group[,2])),type='o',
+     ylab=' ',ylim=c(0,0.4),type='o',
      xlab='Year',main='Share working remotely')
 points(remote.work.untreated.group[,1],remote.work.untreated.group[,2],
        lty=2,pch=2,col=2,type='o')
+
+legend('topleft',legend=c('teleworkable 2019 occupation',
+                          'non-teleworkable 2019 occupation'),
+       col=c(1,2),pch=c(1,2),lty=c(1,2))
+dev.off()
+
+setEPS(width=8,height=4)
+postscript('Figure3.eps')
+par(mar=c(4,4,2,2),mfrow=c(1,1))
+plot(mostly.remote.work.treated.group[,1],mostly.remote.work.treated.group[,2],
+     ylab=' ',ylim=c(0,0.5),type='o',
+     xlab='Year',main='Share working mostly from home')
+points(mostly.remote.work.untreated.group[,1],
+       mostly.remote.work.untreated.group[,2],
+       lty=2,pch=2,col=2,type='o')
+
 legend('topleft',legend=c('teleworkable 2019 occupation',
                           'non-teleworkable 2019 occupation'),
        col=c(1,2),pch=c(1,2),lty=c(1,2))
@@ -617,8 +641,7 @@ dev.off()
 ###############################################
 #Load the results, and plot main event studies#
 ###############################################
-setwd('C:\\Users\\zvh514\\OneDrive - University of York\\Documents\\remote_work')
-results<-read.csv('all_results_v2.CSV')
+results<-read.csv('all_results_working_age_sub_test.CSV')
 colnames(results)
 
 return_results_table<-function(results.subset){
@@ -647,29 +670,35 @@ plot_year_event_study<-function(results.subset,my.title){
   points<-unlist(
     c(subset(df,estimate=='point')[,paste('X',seq(from=2014,to=2018,by=1),sep='')],
       0,
-      subset(df,estimate=='point')[,paste('X',seq(from=2020,to=2022,by=1),sep='')]))
+      subset(df,estimate=='point')[,paste('X',seq(from=2020,to=2023,by=1),sep='')]))
   se<-unlist(
     c(subset(df,estimate=='se')[,paste('X',seq(from=2014,to=2018,by=1),sep='')],
       0,
-      subset(df,estimate=='se')[,paste('X',seq(from=2020,to=2022,by=1),sep='')]))
+      subset(df,estimate=='se')[,paste('X',seq(from=2020,to=2023,by=1),sep='')]))
   
   max.est<-max((points+1.96*se)[is.na(points)==FALSE])
   min.est<-min((points-1.96*se)[is.na(points)==FALSE])
   
-  min.year<-min(seq(from=2014,to=2022,by=1)[is.na(points)==FALSE])
+  min.year<-min(seq(from=2014,to=2023,by=1)[is.na(points)==FALSE])
   points<-points[is.na(points)==FALSE]
   se<-se[is.na(se)==FALSE]
   
-  plot(seq(from=min.year,to=2022,by=1),points,type='o',
+  plot(seq(from=min.year,to=2023,by=1),points,type='o',
        ylim=c(min.est,max.est),xlab='Year',ylab='',
        main=my.title)
-  segments(x0=seq(from=min.year,to=2022,by=1),
+  segments(x0=seq(from=min.year,to=2023,by=1),
            y0=points-1.96*se,
-           x1=seq(from=min.year,to=2022,by=1),
+           x1=seq(from=min.year,to=2023,by=1),
            y1=points+1.96*se)
-  lines(c(min.year,2022),c(0,0))
+  lines(c(min.year,2023),c(0,0))
   
 }
+
+results.subset<-subset(results,sex=='both'&
+                         sample=='balanced'&
+                         estimator=='synth_dd_contr'&
+                         dependent_variable=='wkaut1'&
+                         subset=='all')
 
 plot_year_double_event_study<-function(results.subset,my.title){
   
@@ -711,28 +740,32 @@ plot_year_double_event_study<-function(results.subset,my.title){
   
 }
 
-setwd('C:\\Users\\zvh514\\OneDrive - University of York\\Documents\\remote_work\\output_charts')
 setEPS(width=10,height=4)
-postscript('main_event_study_remote_work.eps')
-par(mar=c(4,4,2,2),mfrow=c(1,2))
-plot_year_double_event_study(subset(results,sex=='both'&
-                               sample=='unbalanced'&
-                               estimator=='C&S_with_PS'&
-                               dependent_variable=='use_remote_work_incl_nw'&
-                                 subset=='all'),
-                      'Doubly-robust'
-)
-plot_year_double_event_study(subset(results,sex=='both'&
-                                      sample=='balanced'&
-                                      estimator=='synth_dd_contr'&
-                                      dependent_variable=='use_remote_work_incl_nw'&
-                                      subset=='all'),
-                             'Synthetic DD'
+postscript('Figure4.eps')
+par(mar=c(4,4,2,2),mfrow=c(1,1))
+plot_year_event_study(subset(results,sex=='both'&
+                      sample=='unbalanced'&
+                      estimator=='C&S_with_PS'&
+                      dependent_variable=='work_mostly_from_home'&
+                      subset=='all'),
+                      'Effect on mostly working from home'
 )
 dev.off()
 
 setEPS(width=10,height=4)
-postscript('GHQ12_caseness_event_studies.eps')
+postscript('FigureB1.eps')
+par(mar=c(4,4,2,2),mfrow=c(1,1))
+plot_year_event_study(subset(results,sex=='both'&
+                               sample=='balanced'&
+                               estimator=='synth_dd_contr'&
+                               dependent_variable=='work_mostly_from_home'
+                             &subset=='all'),
+                      'Effect on mostly working from home'
+)
+dev.off()
+
+setEPS(width=10,height=4)
+postscript('example_for_slides.eps')
 par(mar=c(4,4,2,2),mfrow=c(1,2))
 plot_year_event_study(subset(results,sex=='both'&
                                sample=='unbalanced'&
@@ -758,8 +791,8 @@ mh.list<-c('GHQ12_caseness',
            'SF12_mh','high_caseness')
 
 setEPS(width=10,height=8)
-postscript('loneliness_event_studies.eps')
-par(mar=c(4,4,2,2),mfrow=c(2,2))
+postscript('Figure5.eps')
+par(mar=c(4,4,2,2),mfrow=c(1,2))
 #lonely
 plot_year_event_study(subset(results,sex=='both'&
                                sample=='unbalanced'&
@@ -774,6 +807,11 @@ plot_year_event_study(subset(results,sex=='both'&
                                dependent_variable=='is_often_lonely'&
                                subset=='all'),
                       'Often lonely, doubly robust')
+dev.off()
+
+setEPS(width=10,height=8)
+postscript('FigureB2.eps')
+par(mar=c(4,4,2,2),mfrow=c(1,2))
 plot_year_event_study(subset(results,sex=='both'&
                                sample=='balanced'&
                                estimator=='synth_dd_contr'&
@@ -790,7 +828,7 @@ plot_year_event_study(subset(results,sex=='both'&
 dev.off()
 
 setEPS(width=10,height=12)
-postscript('mental_health_event_studies.eps')
+postscript('Figure6.eps')
 par(mar=c(4,4,2,2),mfrow=c(length(mh.list)/2,2))
 for (mh in mh.list){
 plot_year_event_study(subset(results,sex=='both'&
@@ -803,7 +841,7 @@ plot_year_event_study(subset(results,sex=='both'&
 dev.off()
 
 setEPS(width=10,height=12)
-postscript('mental_health_event_studies_synth_dd.eps')
+postscript('FigureB3.eps')
 par(mar=c(4,4,2,2),mfrow=c(length(mh.list)/2,2))
 for (mh in mh.list){
   plot_year_event_study(subset(results,sex=='both'&
@@ -815,9 +853,8 @@ for (mh in mh.list){
 }
 dev.off()
 
-
 setEPS(width=10,height=12)
-postscript('mechanisms_event_studies.eps')
+postscript('Figure7.eps')
 par(mar=c(4,4,2,2),mfrow=c(4,2))
 #job satisfaction
   plot_year_event_study(subset(results,sex=='both'&
@@ -878,7 +915,7 @@ par(mar=c(4,4,2,2),mfrow=c(4,2))
 dev.off()
 
 setEPS(width=10,height=12)
-postscript('mechanisms_event_studies_synth_dd.eps')
+postscript('FigureB4.eps')
 par(mar=c(4,4,2,2),mfrow=c(4,2))
 #job satisfaction
 plot_year_event_study(subset(results,sex=='both'&
@@ -1014,7 +1051,7 @@ plot_year_event_study(subset(results,sex=='both'&
 
 plot_year_event_study(subset(results,sex=='both'&
                                sample=='balanced'&
-                               estimator=='synth_dd'&
+                               estimator=='synth_dd_contr'&
                                dependent_variable=='loss_of_confidence'),
                       'Synthetic DiD'
 )
@@ -1030,46 +1067,48 @@ plot_year_double_event_study(subset(results,sex=='men'&
 
 #results table: remote work
 remote.work.results<-
-rbind(
   cbind(return_results_table(subset(results,sex=='both'&
                                     sample=='unbalanced'&
                                     estimator=='C&S_with_PS'&
-                                    dependent_variable=='use_remote_work_incl_nw'&
-                                    period_definition=='year_doubles'&
+                                    dependent_variable=='work_mostly_from_home'&
+                                    period_definition=='year'&
                                     subset=='all')),
-      return_results_table(subset(results,sex=='both'&
-                                    sample=='balanced'&
-                                    estimator=='synth_dd_contr'&
-                                    dependent_variable=='use_remote_work_incl_nw'&
-                                    period_definition=='year_doubles'&
-                                    subset=='all'))),
-  cbind(return_results_table(subset(results,sex=='men'&
+  return_results_table(subset(results,sex=='men'&
                                       sample=='unbalanced'&
                                       estimator=='C&S_with_PS'&
-                                      dependent_variable=='use_remote_work_incl_nw'&
-                                      period_definition=='year_doubles'&
+                                      dependent_variable=='work_mostly_from_home'&
+                                      period_definition=='year'&
+                                      subset=='all')),
+  return_results_table(subset(results,sex=='women'&
+                                sample=='unbalanced'&
+                                estimator=='C&S_with_PS'&
+                                dependent_variable=='work_mostly_from_home'&
+                                period_definition=='year'&
+                                subset=='all')))
+  
+remote.work.results.sd<-
+  cbind(return_results_table(subset(results,sex=='both'&
+                                      sample=='balanced'&
+                                      estimator=='synth_dd_contr'&
+                                      dependent_variable=='work_mostly_from_home'&
+                                      period_definition=='year'&
                                       subset=='all')),
         return_results_table(subset(results,sex=='men'&
                                       sample=='balanced'&
                                       estimator=='synth_dd_contr'&
-                                      dependent_variable=='use_remote_work_incl_nw'&
-                                      period_definition=='year_doubles'&
-                                      subset=='all'))),
-  cbind(return_results_table(subset(results,sex=='women'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='use_remote_work_incl_nw'&
-                                      period_definition=='year_doubles'&
+                                      dependent_variable=='work_mostly_from_home'&
+                                      period_definition=='year'&
                                       subset=='all')),
         return_results_table(subset(results,sex=='women'&
                                       sample=='balanced'&
                                       estimator=='synth_dd_contr'&
-                                      dependent_variable=='use_remote_work_incl_nw'&
-                                      period_definition=='year_doubles'&
-                                      subset=='all'))))
+                                      dependent_variable=='work_mostly_from_home'&
+                                      period_definition=='year'&
+                                      subset=='all')))
 
 
-stargazer(remote.work.results,out='remote_work_results')
+stargazer(remote.work.results,out='Table5')
+stargazer(remote.work.results.sd,out='TableB1')
 
 #Loneliness results
 loneliness.main.results<-rbind(
@@ -1084,19 +1123,7 @@ loneliness.main.results<-rbind(
                                 estimator=='C&S_with_PS'&
                                 dependent_variable=='is_often_lonely'&
                                 period_definition=='year'&
-                                subset=='all')),
-return_results_table(subset(results,sex=='both'&
-                              sample=='balanced'&
-                              estimator=='synth_dd_contr'&
-                              dependent_variable=='is_lonely'&
-                              period_definition=='year'&
-                              subset=='all')),
-return_results_table(subset(results,sex=='both'&
-                              sample=='balanced'&
-                              estimator=='synth_dd_contr'&
-                              dependent_variable=='is_often_lonely'&
-                              period_definition=='year'&
-                              subset=='all'))),
+                                subset=='all'))),
 cbind(return_results_table(subset(results,sex=='men'&
                                     sample=='unbalanced'&
                                     estimator=='C&S_with_PS'&
@@ -1106,18 +1133,6 @@ cbind(return_results_table(subset(results,sex=='men'&
       return_results_table(subset(results,sex=='men'&
                                     sample=='unbalanced'&
                                     estimator=='C&S_with_PS'&
-                                    dependent_variable=='is_often_lonely'&
-                                    period_definition=='year'&
-                                    subset=='all')),
-      return_results_table(subset(results,sex=='men'&
-                                    sample=='balanced'&
-                                    estimator=='synth_dd_contr'&
-                                    dependent_variable=='is_lonely'&
-                                    period_definition=='year'&
-                                    subset=='all')),
-      return_results_table(subset(results,sex=='men'&
-                                    sample=='balanced'&
-                                    estimator=='synth_dd_contr'&
                                     dependent_variable=='is_often_lonely'&
                                     period_definition=='year'&
                                     subset=='all'))),
@@ -1132,22 +1147,51 @@ cbind(return_results_table(subset(results,sex=='women'&
                                     estimator=='C&S_with_PS'&
                                     dependent_variable=='is_often_lonely'&
                                     period_definition=='year'&
-                                    subset=='all')),
-      return_results_table(subset(results,sex=='women'&
-                                    sample=='balanced'&
-                                    estimator=='synth_dd_contr'&
-                                    dependent_variable=='is_lonely'&
-                                    period_definition=='year'&
-                                    subset=='all')),
-      return_results_table(subset(results,sex=='women'&
-                                    sample=='balanced'&
-                                    estimator=='synth_dd_contr'&
-                                    dependent_variable=='is_often_lonely'&
-                                    period_definition=='year'&
                                     subset=='all')))
 )
 
-stargazer(loneliness.main.results,out='loneliness_results')
+stargazer(loneliness.main.results,out='Table6')
+
+loneliness.main.results.sd<-rbind(
+  cbind(return_results_table(subset(results,sex=='both'&
+                                      sample=='balanced'&
+                                      estimator=='synth_dd_contr'&
+                                      dependent_variable=='is_lonely'&
+                                      period_definition=='year'&
+                                      subset=='all')),
+        return_results_table(subset(results,sex=='both'&
+                                      sample=='balanced'&
+                                      estimator=='synth_dd_contr'&
+                                      dependent_variable=='is_often_lonely'&
+                                      period_definition=='year'&
+                                      subset=='all'))),
+  cbind(return_results_table(subset(results,sex=='men'&
+                                      sample=='balanced'&
+                                      estimator=='synth_dd_contr'&
+                                      dependent_variable=='is_lonely'&
+                                      period_definition=='year'&
+                                      subset=='all')),
+        return_results_table(subset(results,sex=='men'&
+                                      sample=='balanced'&
+                                      estimator=='synth_dd_contr'&
+                                      dependent_variable=='is_often_lonely'&
+                                      period_definition=='year'&
+                                      subset=='all'))),
+  cbind(return_results_table(subset(results,sex=='women'&
+                                      sample=='balanced'&
+                                      estimator=='synth_dd_contr'&
+                                      dependent_variable=='is_lonely'&
+                                      period_definition=='year'&
+                                      subset=='all')),
+        return_results_table(subset(results,sex=='women'&
+                                      sample=='balanced'&
+                                      estimator=='synth_dd_contr'&
+                                      dependent_variable=='is_often_lonely'&
+                                      period_definition=='year'&
+                                      subset=='all')))
+)
+
+stargazer(loneliness.main.results.sd,out='TableB2')
 
 #Mental health results
 mental.health.results<-
@@ -1264,7 +1308,7 @@ mental.health.results<-
                                       subset=='all'))
   ))
 
-stargazer(mental.health.results,out='mental_health_results')
+stargazer(mental.health.results,out='Table7')
 
 mental.health.results.synth.dd<-
   rbind(
@@ -1380,7 +1424,7 @@ mental.health.results.synth.dd<-
                                         subset=='all'))
     ))
 
-stargazer(mental.health.results.synth.dd,out='mental_health_results')
+stargazer(mental.health.results.synth.dd,out='TableB3')
 
 
 #Other
@@ -1433,12 +1477,6 @@ other.results<-
                                         estimator=='C&S_with_PS'&
                                         dependent_variable=='low_autonomy_summary'&
                                         period_definition=='year_doubles'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='both'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='cares'&
-                                        period_definition=='year'&
                                         subset=='all'))
     ),
     cbind(return_results_table(subset(results,sex=='men'&
@@ -1488,12 +1526,6 @@ other.results<-
                                         estimator=='C&S_with_PS'&
                                         dependent_variable=='low_autonomy_summary'&
                                         period_definition=='year_doubles'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='men'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='cares'&
-                                        period_definition=='year'&
                                         subset=='all'))
     ),
     cbind(return_results_table(subset(results,sex=='women'&
@@ -1543,16 +1575,10 @@ other.results<-
                                         estimator=='C&S_with_PS'&
                                         dependent_variable=='low_autonomy_summary'&
                                         period_definition=='year_doubles'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='women'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='cares'&
-                                        period_definition=='year'&
                                         subset=='all'))
     ))
 
-stargazer(other.results,out='mechanisms_results')
+stargazer(other.results,out='Table8')
 
 other.results.synth.dd<-
   rbind(
@@ -1603,12 +1629,6 @@ other.results.synth.dd<-
                                         estimator=='synth_dd_contr'&
                                         dependent_variable=='low_autonomy_summary'&
                                         period_definition=='year_doubles'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='both'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='cares'&
-                                        period_definition=='year'&
                                         subset=='all'))
     ),
     cbind(return_results_table(subset(results,sex=='men'&
@@ -1658,12 +1678,6 @@ other.results.synth.dd<-
                                         estimator=='synth_dd_contr'&
                                         dependent_variable=='low_autonomy_summary'&
                                         period_definition=='year_doubles'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='men'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='cares'&
-                                        period_definition=='year'&
                                         subset=='all'))
     ),
     cbind(return_results_table(subset(results,sex=='women'&
@@ -1713,16 +1727,10 @@ other.results.synth.dd<-
                                         estimator=='synth_dd_contr'&
                                         dependent_variable=='low_autonomy_summary'&
                                         period_definition=='year_doubles'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='women'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='cares'&
-                                        period_definition=='year'&
                                         subset=='all'))
     ))
 
-stargazer(other.results.synth.dd,out='mechanisms_results')
+stargazer(other.results.synth.dd[,1:8],out='TableB4')
 
 employment.results<-rbind(
 cbind(
@@ -1798,7 +1806,7 @@ cbind(
                                 dependent_variable=='retired'&
                                 period_definition=='year'))))
 
-stargazer(employment.results,out='employment_results')
+stargazer(employment.results,out='TableD1')
 
 care.results<-rbind(
   cbind(
@@ -1874,7 +1882,7 @@ care.results<-rbind(
                                   dependent_variable=='cares_intensively'&
                                   period_definition=='year'))))
 
-stargazer(care.results,out='care_results')
+stargazer(care.results,out='TableE1')
 
 setEPS(width=7,height=6)
 postscript('labor_market_es.eps')
@@ -1909,7 +1917,7 @@ plot_year_event_study(subset(results,sex=='both'&
                       'retired synth dd')
 dev.off()
 
-loneliness.unmarried<-rbind(
+loneliness.married.unmarried<-rbind(
   cbind(return_results_table(subset(results,sex=='both'&
                                       sample=='unbalanced'&
                                       estimator=='C&S_with_PS'&
@@ -1923,71 +1931,6 @@ loneliness.unmarried<-rbind(
                                       period_definition=='year'&
                                       subset=='not_married')),
         return_results_table(subset(results,sex=='both'&
-                                      sample=='balanced'&
-                                      estimator=='synth_dd_contr'&
-                                      dependent_variable=='is_lonely'&
-                                      period_definition=='year'&
-                                      subset=='not_married')),
-        return_results_table(subset(results,sex=='both'&
-                                      sample=='balanced'&
-                                      estimator=='synth_dd_contr'&
-                                      dependent_variable=='is_often_lonely'&
-                                      period_definition=='year'&
-                                      subset=='not_married'))),
-  cbind(return_results_table(subset(results,sex=='men'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='is_lonely'&
-                                      period_definition=='year'&
-                                      subset=='not_married')),
-        return_results_table(subset(results,sex=='men'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='is_often_lonely'&
-                                      period_definition=='year'&
-                                      subset=='not_married')),
-        return_results_table(subset(results,sex=='men'&
-                                      sample=='balanced'&
-                                      estimator=='synth_dd_contr'&
-                                      dependent_variable=='is_lonely'&
-                                      period_definition=='year'&
-                                      subset=='not_married')),
-        return_results_table(subset(results,sex=='men'&
-                                      sample=='balanced'&
-                                      estimator=='synth_dd_contr'&
-                                      dependent_variable=='is_often_lonely'&
-                                      period_definition=='year'&
-                                      subset=='not_married'))),
-  cbind(return_results_table(subset(results,sex=='women'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='is_lonely'&
-                                      period_definition=='year'&
-                                      subset=='not_married')),
-        return_results_table(subset(results,sex=='women'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='is_often_lonely'&
-                                      period_definition=='year'&
-                                      subset=='not_married')),
-        return_results_table(subset(results,sex=='women'&
-                                      sample=='balanced'&
-                                      estimator=='synth_dd_contr'&
-                                      dependent_variable=='is_lonely'&
-                                      period_definition=='year'&
-                                      subset=='not_married')),
-        return_results_table(subset(results,sex=='women'&
-                                      sample=='balanced'&
-                                      estimator=='synth_dd_contr'&
-                                      dependent_variable=='is_often_lonely'&
-                                      period_definition=='year'&
-                                      subset=='not_married')))
-)
-
-stargazer(loneliness.unmarried)
-
-loneliness.married<-rbind(
-  cbind(return_results_table(subset(results,sex=='both'&
                                       sample=='unbalanced'&
                                       estimator=='C&S_with_PS'&
                                       dependent_variable=='is_lonely'&
@@ -1996,18 +1939,6 @@ loneliness.married<-rbind(
         return_results_table(subset(results,sex=='both'&
                                       sample=='unbalanced'&
                                       estimator=='C&S_with_PS'&
-                                      dependent_variable=='is_often_lonely'&
-                                      period_definition=='year'&
-                                      subset=='married')),
-        return_results_table(subset(results,sex=='both'&
-                                      sample=='balanced'&
-                                      estimator=='synth_dd_contr'&
-                                      dependent_variable=='is_lonely'&
-                                      period_definition=='year'&
-                                      subset=='married')),
-        return_results_table(subset(results,sex=='both'&
-                                      sample=='balanced'&
-                                      estimator=='synth_dd_contr'&
                                       dependent_variable=='is_often_lonely'&
                                       period_definition=='year'&
                                       subset=='married'))),
@@ -2016,22 +1947,22 @@ loneliness.married<-rbind(
                                       estimator=='C&S_with_PS'&
                                       dependent_variable=='is_lonely'&
                                       period_definition=='year'&
-                                      subset=='married')),
+                                      subset=='not_married')),
         return_results_table(subset(results,sex=='men'&
                                       sample=='unbalanced'&
                                       estimator=='C&S_with_PS'&
                                       dependent_variable=='is_often_lonely'&
                                       period_definition=='year'&
-                                      subset=='married')),
+                                      subset=='not_married')),
         return_results_table(subset(results,sex=='men'&
-                                      sample=='balanced'&
-                                      estimator=='synth_dd_contr'&
+                                      sample=='unbalanced'&
+                                      estimator=='C&S_with_PS'&
                                       dependent_variable=='is_lonely'&
                                       period_definition=='year'&
                                       subset=='married')),
         return_results_table(subset(results,sex=='men'&
-                                      sample=='balanced'&
-                                      estimator=='synth_dd_contr'&
+                                      sample=='unbalanced'&
+                                      estimator=='C&S_with_PS'&
                                       dependent_variable=='is_often_lonely'&
                                       period_definition=='year'&
                                       subset=='married'))),
@@ -2040,1390 +1971,158 @@ loneliness.married<-rbind(
                                       estimator=='C&S_with_PS'&
                                       dependent_variable=='is_lonely'&
                                       period_definition=='year'&
-                                      subset=='married')),
+                                      subset=='not_married')),
         return_results_table(subset(results,sex=='women'&
                                       sample=='unbalanced'&
                                       estimator=='C&S_with_PS'&
                                       dependent_variable=='is_often_lonely'&
                                       period_definition=='year'&
-                                      subset=='married')),
+                                      subset=='not_married')),
         return_results_table(subset(results,sex=='women'&
-                                      sample=='balanced'&
-                                      estimator=='synth_dd_contr'&
+                                      sample=='unbalanced'&
+                                      estimator=='C&S_with_PS'&
                                       dependent_variable=='is_lonely'&
                                       period_definition=='year'&
                                       subset=='married')),
         return_results_table(subset(results,sex=='women'&
-                                      sample=='balanced'&
-                                      estimator=='synth_dd_contr'&
+                                      sample=='unbalanced'&
+                                      estimator=='C&S_with_PS'&
                                       dependent_variable=='is_often_lonely'&
                                       period_definition=='year'&
                                       subset=='married')))
 )
 
+stargazer(loneliness.married.unmarried,out='TableF1')
 
-labels.key<-cbind(
-  c("unbalanced.twfe","unbalanced.twfe_ipw","unbalanced.C&S","unbalanced.C&S_with_PS",
-    "balanced.twfe", "balanced.synth_dd",
-    "balanced.C&S","balanced.C&S_with_PS"),
-  c("TWFE","IPW TWFE",
-    "C&S","Double robust",
-    "TWFE balanced panel", "synth dd",
-    'C&S balanced panel','Double robust balanced panel')
-)
+loneliness.married.unmarried.sd<-
+  cbind(return_results_table(subset(results,sex=='both'&
+                                      sample=='balanced'&
+                                      estimator=='synth_dd_contr'&
+                                      dependent_variable=='is_lonely'&
+                                      period_definition=='year'&
+                                      subset=='not_married')),
+        return_results_table(subset(results,sex=='both'&
+                                      sample=='balanced'&
+                                      estimator=='synth_dd_contr'&
+                                      dependent_variable=='is_often_lonely'&
+                                      period_definition=='year'&
+                                      subset=='not_married')),
+        return_results_table(subset(results,sex=='both'&
+                                      sample=='balanced'&
+                                      estimator=='synth_dd_contr'&
+                                      dependent_variable=='is_lonely'&
+                                      period_definition=='year'&
+                                      subset=='married')),
+        return_results_table(subset(results,sex=='both'&
+                                      sample=='balanced'&
+                                      estimator=='synth_dd_contr'&
+                                      dependent_variable=='is_often_lonely'&
+                                      period_definition=='year'&
+                                      subset=='married')))
 
-plot_spec_curve_yearly_var<-function(var){
-  
-  df<-subset(results,dependent_variable==var&
-               period_definition=='year'&
-               subset=='all')
-  
-  res.both<-subset(df,sex=='both')
-  points.both<-subset(res.both,estimate=='point')
-  se.both<-subset(res.both,estimate=='se')
-  res.men<-subset(df,sex=='men')
-  points.men<-subset(res.men,estimate=='point')
-  se.men<-subset(res.men,estimate=='se')
-  res.women<-subset(df,sex=='women')
-  points.women<-subset(res.women,estimate=='point')
-  se.women<-subset(res.women,estimate=='se')
-  min.point<-min(c(points.both[,'dd_est']-1.96*se.both[,'dd_est']),
-                 c(points.men[,'dd_est']-1.96*se.men[,'dd_est']),
-                 c(points.women[,'dd_est']-1.96*se.women[,'dd_est']))
-  max.point<-max(c(points.both[,'dd_est']+1.96*se.both[,'dd_est']),
-                 c(points.men[,'dd_est']+1.96*se.men[,'dd_est']),
-                 c(points.women[,'dd_est']+1.96*se.women[,'dd_est']))
-  
-  par(mar=c(4,2,2,2))
-  layout(matrix(c(1,1,2),nrow=3,ncol=1))
-  plot(seq(from=0.8,to=7.8,by=1),
-    points.both[,'dd_est'],ylim=c(min.point,max.point),
-    xaxt='n',xlab='',ylab='',
-    main=str_replace_all(var,'_',' '),
-    xlim=c(0.5,8.5))
-  lines(c(0,9),c(0,0))
-  segments(x0=seq(from=0.8,to=7.8,by=1),
-           y0=points.both[,'dd_est']-1.96*se.both[,'dd_est'],
-           x1=seq(from=0.8,to=7.8,by=1),
-           y1=points.both[,'dd_est']+1.96*se.both[,'dd_est'])
-  
-  points(seq(from=1,to=8,by=1),points.men[,'dd_est'],
-        pch=2,col=2)
-  segments(x0=seq(from=1,to=8,by=1),
-           y0=points.men[,'dd_est']-
-             1.96*se.men[,'dd_est'],
-           x1=seq(from=1,to=8,by=1),
-           y1=points.men[,'dd_est']+
-             1.96*se.men[,'dd_est'],
-           col=2,pch=2)
-  
-  points(seq(from=1.2,to=8.2,by=1),points.women[,'dd_est'],
-         pch=3,col=3)
-  segments(x0=seq(from=1.2,to=8.2,by=1),
-           y0=points.women[,'dd_est']-1.96*se.women[,'dd_est'],
-           x1=seq(from=1.2,to=8.2,by=1),
-           y1=points.women[,'dd_est']+1.96*se.women[,'dd_est'],
-           col=3,pch=3)
-      legend('topleft',
-           legend=c('all','men','women'),
-           pch=c(1,2,3),
-           col=c(1,2,3))
-    
-    plot(seq(from=0.8,to=7.8,by=1),points.both[,'pre_trend_p_value'],
-         ylim=c(0,1),xlim=c(0.5,8.5),xaxt='n',
-         xlab='',main='p-values for pre-trend tests')
-    points(seq(from=1,to=8,by=1),points.men[,'pre_trend_p_value'],
-           pch=2,col=2)
-    points(seq(from=1.2,to=8.2,by=1),points.women[,'pre_trend_p_value'],
-           pch=3,col=3)
-    lines(c(0,9),c(0.05,0.05))
-    axis(1,at=seq(from=1,to=8,by=1),
-         labels=labels.key[match(
-           interaction(points.women[,'sample'],points.women[,'estimator']),
-                                 labels.key[,1]),2])
+stargazer(loneliness.married.unmarried.sd,out='TableF2')
 
-}
-
-plot_spec_curve_yearly_var('GHQ12_caseness')
-
-plot_spec_curve_year_doubles_var<-function(var,my.title){
-  
-  df<-subset(results,dependent_variable==var&
-               period_definition=='year_doubles'&
-               subset=='all')
-  
-  res.both<-subset(df,sex=='both')
-  points.both<-subset(res.both,estimate=='point')
-  se.both<-subset(res.both,estimate=='se')
-  res.men<-subset(df,sex=='men')
-  points.men<-subset(res.men,estimate=='point')
-  se.men<-subset(res.men,estimate=='se')
-  res.women<-subset(df,sex=='women')
-  points.women<-subset(res.women,estimate=='point')
-  se.women<-subset(res.women,estimate=='se')
-  min.point<-min(c(points.both[,'dd_est']-1.96*se.both[,'dd_est'],
-                   points.men[,'dd_est']-1.96*se.men[,'dd_est'],
-                   points.women[,'dd_est']-1.96*se.women[,'dd_est']))
-  max.point<-max(c(points.both[,'dd_est']+1.96*se.both[,'dd_est'],
-                 points.men[,'dd_est']+1.96*se.men[,'dd_est'],
-                 points.women[,'dd_est']+1.96*se.women[,'dd_est']))
-  
-  
-  par(mar=c(4,2,2,2))
-  layout(matrix(c(1,1,2),nrow=3,ncol=1))
-  plot(seq(from=0.8,to=7.8,by=1),
-       points.both[,'dd_est'],ylim=c(min.point,max.point),
-       xaxt='n',xlab='',ylab='',
-       main=my.title,
-       xlim=c(0.5,8.5))
-  lines(c(0,9),c(0,0))
-  segments(x0=seq(from=0.8,to=7.8,by=1),
-           y0=points.both[,'dd_est']-1.96*se.both[,'dd_est'],
-           x1=seq(from=0.8,to=7.8,by=1),
-           y1=points.both[,'dd_est']+1.96*se.both[,'dd_est'])
-  
-  points(seq(from=1,to=8,by=1),points.men[,'dd_est'],
-         pch=2,col=2)
-  segments(x0=seq(from=1,to=8,by=1),
-           y0=points.men[,'dd_est']-
-             1.96*se.men[,'dd_est'],
-           x1=seq(from=1,to=8,by=1),
-           y1=points.men[,'dd_est']+
-             1.96*se.men[,'dd_est'],
-           col=2,pch=2)
-  
-  points(seq(from=1.2,to=8.2,by=1),points.women[,'dd_est'],
-         pch=3,col=3)
-  segments(x0=seq(from=1.2,to=8.2,by=1),
-           y0=points.women[,'dd_est']-1.96*se.women[,'dd_est'],
-           x1=seq(from=1.2,to=8.2,by=1),
-           y1=points.women[,'dd_est']+1.96*se.women[,'dd_est'],
-           col=3,pch=3)
-  legend('bottomleft',
-         legend=c('all','men','women'),
-         pch=c(1,2,3),
-         col=c(1,2,3))
-  
-  plot(seq(from=0.8,to=7.8,by=1),points.both[,'pre_trend_p_value'],
-       ylim=c(0,1),xlim=c(0.5,8.5),xaxt='n',
-       xlab='',main='p-values for pre-trend tests')
-  points(seq(from=1,to=8,by=1),points.men[,'pre_trend_p_value'],
-         pch=2,col=2)
-  points(seq(from=1.2,to=8.2,by=1),points.women[,'pre_trend_p_value'],
-         pch=3,col=3)
-  lines(c(0,9),c(0.05,0.05))
-  
-  
-  axis(1,at=seq(from=1,to=8,by=1),
-       labels=labels.key[match(
-         interaction(points.women[,'sample'],points.women[,'estimator']),
-         labels.key[,1]),2])
-  
-}
-
-plot_spec_curve_yearly_var('is_lonely')
-
-setEPS(width=7,height=6)
-postscript('remote_work_spec_curve.eps')
-plot_spec_curve_year_doubles_var('use_remote_work_incl_nw',
-                                 'Use remote work')
-dev.off()
-
-#MH spec curves
-setEPS(width=7,height=6)
-postscript('ghq12_spec_curve.eps')
-plot_spec_curve_yearly_var('GHQ12_caseness')
-dev.off()
-
-setEPS(width=7,height=6)
-postscript('high_caseness_spec_curve.eps')
-plot_spec_curve_yearly_var('high_caseness')
-dev.off()
-
-setEPS(width=7,height=6)
-postscript('social_dysfunction_spec_curve.eps')
-plot_spec_curve_yearly_var('social_dysfunction')
-dev.off()
-
-setEPS(width=7,height=6)
-postscript('loss_of_conf_spec_curve.eps')
-plot_spec_curve_yearly_var('loss_of_confidence')
-dev.off()
-
-setEPS(width=7,height=6)
-postscript('SF12_spec_curve.eps')
-plot_spec_curve_yearly_var('SF12_mh')
-dev.off()
-
-setEPS(width=7,height=6)
-postscript('anxiety_depression_spec_curve.eps')
-plot_spec_curve_yearly_var('anxiety_and_depression')
-dev.off()
-
-setEPS(width=7,height=6)
-postscript('overall_autonomy_spec_curve.eps')
-plot_spec_curve_year_doubles_var('low_autonomy_summary',
-                                 'Overall low autonomy')
-dev.off()
-
-setEPS(width=7,height=6)
-postscript('wkaut1_spec_curve.eps')
-plot_spec_curve_year_doubles_var('wkaut1',
-             'Low autonomy over tasks')
-dev.off()
-
-setEPS(width=7,height=6)
-postscript('wkaut2_spec_curve.eps')
-plot_spec_curve_year_doubles_var('wkaut2',
-             'Low autonomy over work pace')
-dev.off()
-
-setEPS(width=7,height=6)
-postscript('wkaut3_spec_curve.eps')
-plot_spec_curve_year_doubles_var('wkaut3',
-             'Low autonomy over work manner')
-dev.off()
-
-setEPS(width=7,height=6)
-postscript('wkaut4_spec_curve.eps')
-plot_spec_curve_year_doubles_var('wkaut4',
-             'Low autonomy over task order')
-dev.off()
-
-setEPS(width=7,height=6)
-postscript('wkaut5_spec_curve.eps')
-plot_spec_curve_year_doubles_var('wkaut5',
-             'Low autonomy over work hours')
-dev.off()
-
-setEPS(width=7,height=6)
-postscript('is_lonely_spec_curve.eps')
-plot_spec_curve_yearly_var('is_lonely')
-dev.off()
-
-setEPS(width=7,height=6)
-postscript('job_satisfaction_spec_curve.eps')
-plot_spec_curve_yearly_var('job_satisfaction')
-dev.off()
-
-setEPS(width=7,height=6)
-postscript('high_job_satisfaction_spec_curve.eps')
-plot_spec_curve_yearly_var('high_job_satisfaction')
-dev.off()
-
-setEPS(width=7,height=6)
-postscript('carer_spec_curve.eps')
-plot_spec_curve_yearly_var('cares')
-dev.off()
-
-setEPS(width=10,height=4)
-postscript('es_remote_work_in_person_workers.eps')
-par(mar=c(4,4,2,2),mfrow=c(1,1))
-plot_year_double_event_study(subset(results,sex=='both'&
-                             sample=='unbalanced'&
-                             estimator=='C&S_with_PS'&
-                             dependent_variable=='use_remote_work_incl_nw'&
-                             subset=='in-person work before 2020'),
-                             'Use remote work, men and women'
-)
-dev.off()
-
-remote.work.results.most.affected<-cbind(
-  return_results_table(subset(results,sex=='both'&
-                                sample=='unbalanced'&
-                                estimator=='C&S_with_PS'&
-                                dependent_variable=='use_remote_work_incl_nw'&
-                                subset=='in-person work before 2020')),
-  return_results_table(subset(results,sex=='men'&
-                                sample=='unbalanced'&
-                                estimator=='C&S_with_PS'&
-                                dependent_variable=='use_remote_work_incl_nw'&
-                                subset=='in-person work before 2020')),
-  return_results_table(subset(results,sex=='women'&
-                                sample=='unbalanced'&
-                                estimator=='C&S_with_PS'&
-                                dependent_variable=='use_remote_work_incl_nw'&
-                                subset=='in-person work before 2020')))
-stargazer(remote.work.results.most.affected,out='remote_work_results_most_affected')
-
-#Loneliness results
-loneliness.main.results.most.affected<-rbind(
+loneliness.kids.no.kids<-rbind(
   cbind(return_results_table(subset(results,sex=='both'&
                                       sample=='unbalanced'&
                                       estimator=='C&S_with_PS'&
                                       dependent_variable=='is_lonely'&
                                       period_definition=='year'&
-                                      subset=='in-person work before 2020')),
+                                      subset=='no_kids')),
         return_results_table(subset(results,sex=='both'&
                                       sample=='unbalanced'&
                                       estimator=='C&S_with_PS'&
                                       dependent_variable=='is_often_lonely'&
                                       period_definition=='year'&
-                                      subset=='in-person work before 2020')),
+                                      subset=='no_kids')),
         return_results_table(subset(results,sex=='both'&
-                                      sample=='balanced'&
-                                      estimator=='synth_dd_contr'&
+                                      sample=='unbalanced'&
+                                      estimator=='C&S_with_PS'&
                                       dependent_variable=='is_lonely'&
                                       period_definition=='year'&
-                                      subset=='in-person work before 2020')),
+                                      subset=='kids')),
         return_results_table(subset(results,sex=='both'&
-                                      sample=='balanced'&
-                                      estimator=='synth_dd_contr'&
+                                      sample=='unbalanced'&
+                                      estimator=='C&S_with_PS'&
                                       dependent_variable=='is_often_lonely'&
                                       period_definition=='year'&
-                                      subset=='in-person work before 2020'))),
+                                      subset=='kids'))),
   cbind(return_results_table(subset(results,sex=='men'&
                                       sample=='unbalanced'&
                                       estimator=='C&S_with_PS'&
                                       dependent_variable=='is_lonely'&
                                       period_definition=='year'&
-                                      subset=='in-person work before 2020')),
+                                      subset=='no_kids')),
         return_results_table(subset(results,sex=='men'&
                                       sample=='unbalanced'&
                                       estimator=='C&S_with_PS'&
                                       dependent_variable=='is_often_lonely'&
                                       period_definition=='year'&
-                                      subset=='in-person work before 2020')),
+                                      subset=='no_kids')),
         return_results_table(subset(results,sex=='men'&
-                                      sample=='balanced'&
-                                      estimator=='synth_dd_contr'&
+                                      sample=='unbalanced'&
+                                      estimator=='C&S_with_PS'&
                                       dependent_variable=='is_lonely'&
                                       period_definition=='year'&
-                                      subset=='in-person work before 2020')),
+                                      subset=='kids')),
         return_results_table(subset(results,sex=='men'&
-                                      sample=='balanced'&
-                                      estimator=='synth_dd_contr'&
+                                      sample=='unbalanced'&
+                                      estimator=='C&S_with_PS'&
                                       dependent_variable=='is_often_lonely'&
                                       period_definition=='year'&
-                                      subset=='in-person work before 2020'))),
+                                      subset=='kids'))),
   cbind(return_results_table(subset(results,sex=='women'&
                                       sample=='unbalanced'&
                                       estimator=='C&S_with_PS'&
                                       dependent_variable=='is_lonely'&
                                       period_definition=='year'&
-                                      subset=='in-person work before 2020')),
+                                      subset=='no_kids')),
         return_results_table(subset(results,sex=='women'&
                                       sample=='unbalanced'&
                                       estimator=='C&S_with_PS'&
                                       dependent_variable=='is_often_lonely'&
                                       period_definition=='year'&
-                                      subset=='in-person work before 2020')),
+                                      subset=='no_kids')),
         return_results_table(subset(results,sex=='women'&
-                                      sample=='balanced'&
-                                      estimator=='synth_dd_contr'&
+                                      sample=='unbalanced'&
+                                      estimator=='C&S_with_PS'&
                                       dependent_variable=='is_lonely'&
                                       period_definition=='year'&
-                                      subset=='in-person work before 2020')),
+                                      subset=='kids')),
         return_results_table(subset(results,sex=='women'&
-                                      sample=='balanced'&
-                                      estimator=='synth_dd_contr'&
+                                      sample=='unbalanced'&
+                                      estimator=='C&S_with_PS'&
                                       dependent_variable=='is_often_lonely'&
                                       period_definition=='year'&
-                                      subset=='in-person work before 2020')))
+                                      subset=='kids')))
 )
 
-stargazer(loneliness.main.results.most.affected,out='loneliness_results_most_affected_group')
-
-mh.results.in.person.before.2020<-rbind(
-  cbind(return_results_table(subset(results,sex=='both'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='GHQ12_caseness'&
-                                      period_definition=='year'&
-                                      subset=='in-person work before 2020')),
-        return_results_table(subset(results,sex=='both'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='high_caseness'&
-                                      period_definition=='year'&
-                                      subset=='in-person work before 2020')),
-        return_results_table(subset(results,sex=='both'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='anxiety_and_depression'&
-                                      period_definition=='year'&
-                                      subset=='in-person work before 2020')),
-        return_results_table(subset(results,sex=='both'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='loss_of_confidence'&
-                                      period_definition=='year'&
-                                      subset=='in-person work before 2020')),
-        return_results_table(subset(results,sex=='both'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='social_dysfunction'&
-                                      period_definition=='year'&
-                                      subset=='in-person work before 2020')),
-        return_results_table(subset(results,sex=='both'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='SF12_mh'&
-                                      period_definition=='year'&
-                                      subset=='in-person work before 2020'))
-  ),
-  cbind(return_results_table(subset(results,sex=='men'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='GHQ12_caseness'&
-                                      period_definition=='year'&
-                                      subset=='in-person work before 2020')),
-        return_results_table(subset(results,sex=='men'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='high_caseness'&
-                                      period_definition=='year'&
-                                      subset=='in-person work before 2020')),
-        return_results_table(subset(results,sex=='men'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='anxiety_and_depression'&
-                                      period_definition=='year'&
-                                      subset=='in-person work before 2020')),
-        return_results_table(subset(results,sex=='men'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='loss_of_confidence'&
-                                      period_definition=='year'&
-                                      subset=='in-person work before 2020')),
-        return_results_table(subset(results,sex=='men'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='social_dysfunction'&
-                                      period_definition=='year'&
-                                      subset=='in-person work before 2020')),
-        return_results_table(subset(results,sex=='men'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='SF12_mh'&
-                                      period_definition=='year'&
-                                      subset=='in-person work before 2020'))
-  ),
-  cbind(return_results_table(subset(results,sex=='women'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='GHQ12_caseness'&
-                                      period_definition=='year'&
-                                      subset=='in-person work before 2020')),
-        return_results_table(subset(results,sex=='women'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='high_caseness'&
-                                      period_definition=='year'&
-                                      subset=='in-person work before 2020')),
-        return_results_table(subset(results,sex=='women'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='anxiety_and_depression'&
-                                      period_definition=='year'&
-                                      subset=='in-person work before 2020')),
-        return_results_table(subset(results,sex=='women'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='loss_of_confidence'&
-                                      period_definition=='year'&
-                                      subset=='in-person work before 2020')),
-        return_results_table(subset(results,sex=='both'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='social_dysfunction'&
-                                      period_definition=='year'&
-                                      subset=='in-person work before 2020')),
-        return_results_table(subset(results,sex=='women'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='SF12_mh'&
-                                      period_definition=='year'&
-                                      subset=='in-person work before 2020'))
-  ))
-
-stargazer(mh.results.in.person.before.2020,out='mh_results_most_affected_group')
-
-mechanisms.most.affected.results<-
-  rbind(
-    cbind(return_results_table(subset(results,sex=='both'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='job_satisfaction'&
-                                        period_definition=='year'&
-                                        subset=='in-person work before 2020')),
-          return_results_table(subset(results,sex=='both'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='high_job_satisfaction'&
-                                        period_definition=='year'&
-                                        subset=='in-person work before 2020')),
-          return_results_table(subset(results,sex=='both'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='wkaut1'&
-                                        period_definition=='year_doubles'&
-                                        subset=='in-person work before 2020')),
-          return_results_table(subset(results,sex=='both'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='wkaut2'&
-                                        period_definition=='year_doubles'&
-                                        subset=='in-person work before 2020')),
-          return_results_table(subset(results,sex=='both'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='wkaut3'&
-                                        period_definition=='year_doubles'&
-                                        subset=='in-person work before 2020')),
-          return_results_table(subset(results,sex=='both'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='wkaut4'&
-                                        period_definition=='year_doubles'&
-                                        subset=='in-person work before 2020')),
-          return_results_table(subset(results,sex=='both'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='wkaut5'&
-                                        period_definition=='year_doubles'&
-                                        subset=='in-person work before 2020')),
-          return_results_table(subset(results,sex=='both'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='low_autonomy_summary'&
-                                        period_definition=='year_doubles'&
-                                        subset=='in-person work before 2020')),
-          return_results_table(subset(results,sex=='both'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='cares'&
-                                        period_definition=='year'&
-                                        subset=='in-person work before 2020'))
-    ),
-    cbind(return_results_table(subset(results,sex=='men'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='job_satisfaction'&
-                                        period_definition=='year'&
-                                        subset=='in-person work before 2020')),
-          return_results_table(subset(results,sex=='men'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='high_job_satisfaction'&
-                                        period_definition=='year'&
-                                        subset=='in-person work before 2020')),
-          return_results_table(subset(results,sex=='men'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='wkaut1'&
-                                        period_definition=='year_doubles'&
-                                        subset=='in-person work before 2020')),
-          return_results_table(subset(results,sex=='men'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='wkaut2'&
-                                        period_definition=='year_doubles'&
-                                        subset=='in-person work before 2020')),
-          return_results_table(subset(results,sex=='men'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='wkaut3'&
-                                        period_definition=='year_doubles'&
-                                        subset=='in-person work before 2020')),
-          return_results_table(subset(results,sex=='men'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='wkaut4'&
-                                        period_definition=='year_doubles'&
-                                        subset=='in-person work before 2020')),
-          return_results_table(subset(results,sex=='men'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='wkaut5'&
-                                        period_definition=='year_doubles'&
-                                        subset=='in-person work before 2020')),
-          return_results_table(subset(results,sex=='men'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='low_autonomy_summary'&
-                                        period_definition=='year_doubles'&
-                                        subset=='in-person work before 2020')),
-          return_results_table(subset(results,sex=='men'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='cares'&
-                                        period_definition=='year'&
-                                        subset=='in-person work before 2020'))
-    ),
-    cbind(return_results_table(subset(results,sex=='women'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='job_satisfaction'&
-                                        period_definition=='year'&
-                                        subset=='in-person work before 2020')),
-          return_results_table(subset(results,sex=='women'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='high_job_satisfaction'&
-                                        period_definition=='year'&
-                                        subset=='in-person work before 2020')),
-          return_results_table(subset(results,sex=='women'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='wkaut1'&
-                                        period_definition=='year_doubles'&
-                                        subset=='in-person work before 2020')),
-          return_results_table(subset(results,sex=='women'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='wkaut2'&
-                                        period_definition=='year_doubles'&
-                                        subset=='in-person work before 2020')),
-          return_results_table(subset(results,sex=='women'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='wkaut3'&
-                                        period_definition=='year_doubles'&
-                                        subset=='in-person work before 2020')),
-          return_results_table(subset(results,sex=='women'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='wkaut4'&
-                                        period_definition=='year_doubles'&
-                                        subset=='in-person work before 2020')),
-          return_results_table(subset(results,sex=='women'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='wkaut5'&
-                                        period_definition=='year_doubles'&
-                                        subset=='in-person work before 2020')),
-          return_results_table(subset(results,sex=='women'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='low_autonomy_summary'&
-                                        period_definition=='year_doubles'&
-                                        subset=='in-person work before 2020')),
-          return_results_table(subset(results,sex=='women'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='cares'&
-                                        period_definition=='year'&
-                                        subset=='in-person work before 2020'))
-    ))
-
-stargazer(mechanisms.most.affected.results,out='mechanisms_results_most_affected')
-
-##########################################
-#Repeat main results for unmarried people#
-##########################################
-
-remote.work.results.unmarried<-cbind(
-  return_results_table(subset(results,sex=='both'&
-                                sample=='unbalanced'&
-                                estimator=='C&S_with_PS'&
-                                dependent_variable=='use_remote_work_incl_nw'&
-                                subset=='not_married')),
-  return_results_table(subset(results,sex=='men'&
-                                sample=='unbalanced'&
-                                estimator=='C&S_with_PS'&
-                                dependent_variable=='use_remote_work_incl_nw'&
-                                subset=='not_married')),
-  return_results_table(subset(results,sex=='women'&
-                                sample=='unbalanced'&
-                                estimator=='C&S_with_PS'&
-                                dependent_variable=='use_remote_work_incl_nw'&
-                                subset=='not_married')))
-stargazer(remote.work.results.unmarried,
-          out='remote_work_results_unmarried')
-
-#Loneliness results
-loneliness.main.results.unmarried<-rbind(
-  cbind(return_results_table(subset(results,sex=='both'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='is_lonely'&
-                                      period_definition=='year'&
-                                      subset=='not_married')),
-        return_results_table(subset(results,sex=='both'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='is_often_lonely'&
-                                      period_definition=='year'&
-                                      subset=='not_married')),
-        return_results_table(subset(results,sex=='both'&
-                                      sample=='balanced'&
-                                      estimator=='synth_dd_contr'&
-                                      dependent_variable=='is_lonely'&
-                                      period_definition=='year'&
-                                      subset=='not_married')),
-        return_results_table(subset(results,sex=='both'&
-                                      sample=='balanced'&
-                                      estimator=='synth_dd_contr'&
-                                      dependent_variable=='is_often_lonely'&
-                                      period_definition=='year'&
-                                      subset=='not_married'))),
-  cbind(return_results_table(subset(results,sex=='men'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='is_lonely'&
-                                      period_definition=='year'&
-                                      subset=='not_married')),
-        return_results_table(subset(results,sex=='men'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='is_often_lonely'&
-                                      period_definition=='year'&
-                                      subset=='not_married')),
-        return_results_table(subset(results,sex=='men'&
-                                      sample=='balanced'&
-                                      estimator=='synth_dd_contr'&
-                                      dependent_variable=='is_lonely'&
-                                      period_definition=='year'&
-                                      subset=='not_married')),
-        return_results_table(subset(results,sex=='men'&
-                                      sample=='balanced'&
-                                      estimator=='synth_dd_contr'&
-                                      dependent_variable=='is_often_lonely'&
-                                      period_definition=='year'&
-                                      subset=='not_married'))),
-  cbind(return_results_table(subset(results,sex=='women'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='is_lonely'&
-                                      period_definition=='year'&
-                                      subset=='not_married')),
-        return_results_table(subset(results,sex=='women'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='is_often_lonely'&
-                                      period_definition=='year'&
-                                      subset=='not_married')),
-        return_results_table(subset(results,sex=='women'&
-                                      sample=='balanced'&
-                                      estimator=='synth_dd_contr'&
-                                      dependent_variable=='is_lonely'&
-                                      period_definition=='year'&
-                                      subset=='not_married')),
-        return_results_table(subset(results,sex=='women'&
-                                      sample=='balanced'&
-                                      estimator=='synth_dd_contr'&
-                                      dependent_variable=='is_often_lonely'&
-                                      period_definition=='year'&
-                                      subset=='not_married')))
-)
-
-stargazer(loneliness.main.results.unmarried,
-          out='loneliness_results_unmarried')
-
-
-mh.results.unmarried<-rbind(
-  cbind(return_results_table(subset(results,sex=='both'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='GHQ12_caseness'&
-                                      period_definition=='year'&
-                                      subset=='not_married')),
-        return_results_table(subset(results,sex=='both'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='high_caseness'&
-                                      period_definition=='year'&
-                                      subset=='not_married')),
-        return_results_table(subset(results,sex=='both'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='anxiety_and_depression'&
-                                      period_definition=='year'&
-                                      subset=='not_married')),
-        return_results_table(subset(results,sex=='both'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='loss_of_confidence'&
-                                      period_definition=='year'&
-                                      subset=='not_married')),
-        return_results_table(subset(results,sex=='both'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='social_dysfunction'&
-                                      period_definition=='year'&
-                                      subset=='not_married')),
-        return_results_table(subset(results,sex=='both'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='SF12_mh'&
-                                      period_definition=='year'&
-                                      subset=='not_married'))
-  ),
-  cbind(return_results_table(subset(results,sex=='men'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='GHQ12_caseness'&
-                                      period_definition=='year'&
-                                      subset=='not_married')),
-        return_results_table(subset(results,sex=='men'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='high_caseness'&
-                                      period_definition=='year'&
-                                      subset=='not_married')),
-        return_results_table(subset(results,sex=='men'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='anxiety_and_depression'&
-                                      period_definition=='year'&
-                                      subset=='not_married')),
-        return_results_table(subset(results,sex=='men'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='loss_of_confidence'&
-                                      period_definition=='year'&
-                                      subset=='not_married')),
-        return_results_table(subset(results,sex=='men'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='social_dysfunction'&
-                                      period_definition=='year'&
-                                      subset=='not_married')),
-        return_results_table(subset(results,sex=='men'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='SF12_mh'&
-                                      period_definition=='year'&
-                                      subset=='not_married'))
-  ),
-  cbind(return_results_table(subset(results,sex=='women'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='GHQ12_caseness'&
-                                      period_definition=='year'&
-                                      subset=='not_married')),
-        return_results_table(subset(results,sex=='women'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='high_caseness'&
-                                      period_definition=='year'&
-                                      subset=='not_married')),
-        return_results_table(subset(results,sex=='women'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='anxiety_and_depression'&
-                                      period_definition=='year'&
-                                      subset=='not_married')),
-        return_results_table(subset(results,sex=='women'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='loss_of_confidence'&
-                                      period_definition=='year'&
-                                      subset=='not_married')),
-        return_results_table(subset(results,sex=='both'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='social_dysfunction'&
-                                      period_definition=='year'&
-                                      subset=='not_married')),
-        return_results_table(subset(results,sex=='women'&
-                                      sample=='unbalanced'&
-                                      estimator=='C&S_with_PS'&
-                                      dependent_variable=='SF12_mh'&
-                                      period_definition=='year'&
-                                      subset=='not_married'))
-  ))
-
-stargazer(mh.results.unmarried,out='mh_results_unmarried')
-
-mechanisms.results.unmarried<-
-  rbind(
-    cbind(return_results_table(subset(results,sex=='both'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='job_satisfaction'&
-                                        period_definition=='year'&
-                                        subset=='not_married')),
-          return_results_table(subset(results,sex=='both'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='high_job_satisfaction'&
-                                        period_definition=='year'&
-                                        subset=='not_married')),
-          return_results_table(subset(results,sex=='both'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='wkaut1'&
-                                        period_definition=='year_doubles'&
-                                        subset=='not_married')),
-          return_results_table(subset(results,sex=='both'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='wkaut2'&
-                                        period_definition=='year_doubles'&
-                                        subset=='not_married')),
-          return_results_table(subset(results,sex=='both'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='wkaut3'&
-                                        period_definition=='year_doubles'&
-                                        subset=='not_married')),
-          return_results_table(subset(results,sex=='both'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='wkaut4'&
-                                        period_definition=='year_doubles'&
-                                        subset=='not_married')),
-          return_results_table(subset(results,sex=='both'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='wkaut5'&
-                                        period_definition=='year_doubles'&
-                                        subset=='not_married')),
-          return_results_table(subset(results,sex=='both'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='low_autonomy_summary'&
-                                        period_definition=='year_doubles'&
-                                        subset=='not_married')),
-          return_results_table(subset(results,sex=='both'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='cares'&
-                                        period_definition=='year'&
-                                        subset=='not_married'))
-    ),
-    cbind(return_results_table(subset(results,sex=='men'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='job_satisfaction'&
-                                        period_definition=='year'&
-                                        subset=='not_married')),
-          return_results_table(subset(results,sex=='men'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='high_job_satisfaction'&
-                                        period_definition=='year'&
-                                        subset=='not_married')),
-          return_results_table(subset(results,sex=='men'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='wkaut1'&
-                                        period_definition=='year_doubles'&
-                                        subset=='not_married')),
-          return_results_table(subset(results,sex=='men'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='wkaut2'&
-                                        period_definition=='year_doubles'&
-                                        subset=='not_married')),
-          return_results_table(subset(results,sex=='men'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='wkaut3'&
-                                        period_definition=='year_doubles'&
-                                        subset=='not_married')),
-          return_results_table(subset(results,sex=='men'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='wkaut4'&
-                                        period_definition=='year_doubles'&
-                                        subset=='not_married')),
-          return_results_table(subset(results,sex=='men'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='wkaut5'&
-                                        period_definition=='year_doubles'&
-                                        subset=='not_married')),
-          return_results_table(subset(results,sex=='men'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='low_autonomy_summary'&
-                                        period_definition=='year_doubles'&
-                                        subset=='not_married')),
-          return_results_table(subset(results,sex=='men'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='cares'&
-                                        period_definition=='year'&
-                                        subset=='not_married'))
-    ),
-    cbind(return_results_table(subset(results,sex=='women'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='job_satisfaction'&
-                                        period_definition=='year'&
-                                        subset=='not_married')),
-          return_results_table(subset(results,sex=='women'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='high_job_satisfaction'&
-                                        period_definition=='year'&
-                                        subset=='not_married')),
-          return_results_table(subset(results,sex=='women'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='wkaut1'&
-                                        period_definition=='year_doubles'&
-                                        subset=='not_married')),
-          return_results_table(subset(results,sex=='women'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='wkaut2'&
-                                        period_definition=='year_doubles'&
-                                        subset=='not_married')),
-          return_results_table(subset(results,sex=='women'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='wkaut3'&
-                                        period_definition=='year_doubles'&
-                                        subset=='not_married')),
-          return_results_table(subset(results,sex=='women'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='wkaut4'&
-                                        period_definition=='year_doubles'&
-                                        subset=='not_married')),
-          return_results_table(subset(results,sex=='women'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='wkaut5'&
-                                        period_definition=='year_doubles'&
-                                        subset=='not_married')),
-          return_results_table(subset(results,sex=='women'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='low_autonomy_summary'&
-                                        period_definition=='year_doubles'&
-                                        subset=='not_married')),
-          return_results_table(subset(results,sex=='women'&
-                                        sample=='unbalanced'&
-                                        estimator=='C&S_with_PS'&
-                                        dependent_variable=='cares'&
-                                        period_definition=='year'&
-                                        subset=='not_married'))
-    ))
-
-stargazer(mechanisms.results.unmarried,out='mechanisms_results_most_affected')
-
-return_results_table(subset(results,sex=='both'&
-                              sample=='balanced'&
-                              estimator=='synth_dd'&
-                              period_definition=='year_doubles'&
-                              dependent_variable=='low_autonomy_summary'&
-                              subset=='all'))
-
-
-#results table: remote work
-remote.work.results.synth.dd<-
+loneliness.kids.no.kids.sd<-
   cbind(return_results_table(subset(results,sex=='both'&
                                       sample=='balanced'&
                                       estimator=='synth_dd_contr'&
-                                      dependent_variable=='use_remote_work_incl_nw'&
-                                      period_definition=='year_doubles'&
-                                      subset=='all')),
-        return_results_table(subset(results,sex=='men'&
+                                      dependent_variable=='is_lonely'&
+                                      period_definition=='year'&
+                                      subset=='no_kids')),
+        return_results_table(subset(results,sex=='both'&
                                       sample=='balanced'&
                                       estimator=='synth_dd_contr'&
-                                      dependent_variable=='use_remote_work_incl_nw'&
-                                      period_definition=='year_doubles'&
-                                      subset=='all')),
-        return_results_table(subset(results,sex=='women'&
+                                      dependent_variable=='is_often_lonely'&
+                                      period_definition=='year'&
+                                      subset=='no_kids')),
+        return_results_table(subset(results,sex=='both'&
                                       sample=='balanced'&
                                       estimator=='synth_dd_contr'&
-                                      dependent_variable=='use_remote_work_incl_nw'&
-                                      period_definition=='year_doubles'&
-                                      subset=='all')))
+                                      dependent_variable=='is_lonely'&
+                                      period_definition=='year'&
+                                      subset=='kids')),
+        return_results_table(subset(results,sex=='both'&
+                                      sample=='balanced'&
+                                      estimator=='synth_dd_contr'&
+                                      dependent_variable=='is_often_lonely'&
+                                      period_definition=='year'&
+                                      subset=='kids')))
 
-stargazer(remote.work.results.synth.dd,out='remote_work_results_synth_dd')
+stargazer(loneliness.kids.no.kids,out='TableG1')
+stargazer(loneliness.kids.no.kids.sd,out='TableG2')
 
-#Mental health results
-mental.health.results.synth.dd<-
-  rbind(
-    cbind(return_results_table(subset(results,sex=='both'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='GHQ12_caseness'&
-                                        period_definition=='year'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='both'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='high_caseness'&
-                                        period_definition=='year'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='both'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='anxiety_and_depression'&
-                                        period_definition=='year'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='both'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='loss_of_confidence'&
-                                        period_definition=='year'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='both'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='social_dysfunction'&
-                                        period_definition=='year'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='both'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='SF12_mh'&
-                                        period_definition=='year'&
-                                        subset=='all'))
-    ),
-    cbind(return_results_table(subset(results,sex=='men'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='GHQ12_caseness'&
-                                        period_definition=='year'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='men'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='high_caseness'&
-                                        period_definition=='year'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='men'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='anxiety_and_depression'&
-                                        period_definition=='year'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='men'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='loss_of_confidence'&
-                                        period_definition=='year'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='men'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='social_dysfunction'&
-                                        period_definition=='year'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='men'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='SF12_mh'&
-                                        period_definition=='year'&
-                                        subset=='all'))
-    ),
-    cbind(return_results_table(subset(results,sex=='women'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='GHQ12_caseness'&
-                                        period_definition=='year'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='women'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='high_caseness'&
-                                        period_definition=='year'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='women'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='anxiety_and_depression'&
-                                        period_definition=='year'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='women'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='loss_of_confidence'&
-                                        period_definition=='year'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='women'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='social_dysfunction'&
-                                        period_definition=='year'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='women'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='SF12_mh'&
-                                        period_definition=='year'&
-                                        subset=='all'))
-    ))
-
-stargazer(mental.health.results.synth.dd,out='mental_health_results_synth_dd')
-
-#Mechanisms
-mechanisms.results.synth.dd<-
-  rbind(
-    cbind(return_results_table(subset(results,sex=='both'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='job_satisfaction'&
-                                        period_definition=='year'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='both'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='high_job_satisfaction'&
-                                        period_definition=='year'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='both'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='wkaut1'&
-                                        period_definition=='year_doubles'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='both'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='wkaut2'&
-                                        period_definition=='year_doubles'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='both'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='wkaut3'&
-                                        period_definition=='year_doubles'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='both'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='wkaut4'&
-                                        period_definition=='year_doubles'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='both'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='wkaut5'&
-                                        period_definition=='year_doubles'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='both'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='low_autonomy_summary'&
-                                        period_definition=='year_doubles'&
-                                        subset=='all'))
-    ),
-    cbind(return_results_table(subset(results,sex=='men'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='job_satisfaction'&
-                                        period_definition=='year'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='men'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='high_job_satisfaction'&
-                                        period_definition=='year'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='men'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='wkaut1'&
-                                        period_definition=='year_doubles'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='men'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='wkaut2'&
-                                        period_definition=='year_doubles'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='men'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='wkaut3'&
-                                        period_definition=='year_doubles'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='men'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='wkaut4'&
-                                        period_definition=='year_doubles'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='men'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='wkaut5'&
-                                        period_definition=='year_doubles'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='men'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='low_autonomy_summary'&
-                                        period_definition=='year_doubles'&
-                                        subset=='all'))
-    ),
-    cbind(return_results_table(subset(results,sex=='women'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='job_satisfaction'&
-                                        period_definition=='year'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='women'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='high_job_satisfaction'&
-                                        period_definition=='year'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='women'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='wkaut1'&
-                                        period_definition=='year_doubles'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='women'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='wkaut2'&
-                                        period_definition=='year_doubles'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='women'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='wkaut3'&
-                                        period_definition=='year_doubles'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='women'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='wkaut4'&
-                                        period_definition=='year_doubles'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='women'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='wkaut5'&
-                                        period_definition=='year_doubles'&
-                                        subset=='all')),
-          return_results_table(subset(results,sex=='women'&
-                                        sample=='balanced'&
-                                        estimator=='synth_dd_contr'&
-                                        dependent_variable=='low_autonomy_summary'&
-                                        period_definition=='year_doubles'&
-                                        subset=='all'))
-    ))
-
-stargazer(mechanisms.results.synth.dd,out='mechanisms_results_synth_dd')
-
-
-plot_year_double_event_study(subset(results,sex=='both'&
-                               sample=='balanced'&
-                               estimator=='synth_dd_contr'&
-                               dependent_variable=='use_remote_work_incl_nw'&
-                               subset=='all'),
-                      'Often lonely')
-
-return_results_table(subset(results,sex=='women'&
-                              sample=='unbalanced'&
-                              estimator=='twfe'&
-                              dependent_variable=='cares'&
-                              period_definition=='year'&
-                              subset=='all'))
-
-
-plot(as.numeric(c(subset(results,sex=='both'&
-         sample=='balanced'&
-         estimator=='twfe'&
-         subset=='all'&
-         dependent_variable=='job_satisfaction'&
-         period_definition=='year')[1,7:11],0,
-  subset(results,sex=='both'&
-           sample=='balanced'&
-           estimator=='twfe'&
-           subset=='all'&
-           dependent_variable=='job_satisfaction'&
-           period_definition=='year')[1,12:14])),type='l',
-  ylim=c(-0.15,0.15))
