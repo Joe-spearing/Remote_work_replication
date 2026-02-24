@@ -1,12 +1,15 @@
 rm(list=ls())
 library(haven)
 
+data.directory<-'Z:\\Projects\\remote_work\\UKDA-6931-stata\\stata\\stata13_se\\ukhls'
+output.directory<-'C:\\Users\\zvh514\\OneDrive - University of York\\Documents\\remote_work\\output_charts'
+
 letters<-c('a','b','c','d','e','f','g','h','i','j','k','l','m','n','o',
            'p','q','r')
 
-setwd('Z:\\Projects\\remote_work\\UKDA-6931-stata\\stata\\stata13_se\\ukhls')
+setwd(data.directory)
 
-for (val in seq(from=1,to=14,by=1)){
+for (val in seq(from=1,to=15,by=1)){
   
   file.name<-paste(letters[val],'_indresp_protect.dta',sep='')
   
@@ -24,22 +27,23 @@ for (val in seq(from=1,to=14,by=1)){
 
 cross.wave.data<-read_dta('xwavedat_protect.dta')
 
-setwd('C:\\Users\\zvh514\\OneDrive - University of York\\Documents\\remote_work')
 cpi.data<-read.csv('CPI_Index.CSV')
 
 indresp.list<-list(indresp_19,indresp_20,
                    indresp_21,indresp_22,indresp_23,indresp_24,
                    indresp_25,indresp_26,indresp_27,indresp_28,
-                   indresp_29,indresp_30,indresp_31,indresp_32)
+                   indresp_29,indresp_30,indresp_31,indresp_32,
+                   indresp_33)
 hhresp.list<-list(hhresp_19,hhresp_20,
                    hhresp_21,hhresp_22,hhresp_23,hhresp_24,
                    hhresp_25,hhresp_26,hhresp_27,hhresp_28,
-                   hhresp_29,hhresp_30,hhresp_31,hhresp_32)
+                   hhresp_29,hhresp_30,hhresp_31,hhresp_32,
+                  hhresp_33)
 
 
 letter.list<-letters
 
-for (val in seq(from=1,to=14,by=1)){
+for (val in seq(from=1,to=15,by=1)){
   #get a list of variables (and names) I want to extract
   person.ID<-'pidp'
   hh.id<-paste(letter.list[val],'_hidp',sep='')
@@ -75,7 +79,7 @@ for (val in seq(from=1,to=14,by=1)){
   did.paid.work<-paste(letter.list[val],'_jbhas',sep='')
   remote.work.offer<-paste(letter.list[val],'_jbflex7',sep='')
   remote.work.use<-paste(letter.list[val],'_jbfxuse7',sep='')
-  kids.var<-paste(letter.list[val],'_nchresp',sep='')
+  kids.var<-paste(letter.list[val],'_nchild_dv',sep='')
   weight.var<-paste(letter.list[val],'_indinus_lw',sep='')
   agreeableness<-paste(letter.list[val],'_big5a_dv',sep='')
   conscientiousness<-paste(letter.list[val],'_big5c_dv',sep='')
@@ -90,6 +94,7 @@ for (val in seq(from=1,to=14,by=1)){
   carer<-paste(letter.list[val],'_aidhh',sep='')
   hours.care<-paste(letter.list[val],'_aidhrs',sep='')
   adults.in.hh<-paste(letter.list[val],'_nadoecd_dv',sep='')
+  main.work.location<-paste(letter.list[val],'_jbpl',sep='')
   
   wkaut1<-paste(letters[val],'_wkaut1',sep='')
   wkaut2<-paste(letters[val],'_wkaut2',sep='')
@@ -174,6 +179,7 @@ for (val in seq(from=1,to=14,by=1)){
                           indresp_n[,health.in.general],
                           remote.offer.var,
                           remote.use.var,
+                          indresp_n[,main.work.location],
                           indresp_n[,kids.var],
                           weights,
                           cpi.data[match(indresp_n[,interview.year],cpi.data[,1]),2],
@@ -211,6 +217,7 @@ for (val in seq(from=1,to=14,by=1)){
                   'health_in_general',
                   'offer_remote_work',
                   'use_remote_work',
+                  'main_work_location',
                   'no_kids',
                   'weights',
                   'CPI_index',
@@ -255,7 +262,8 @@ full_df<-rbind(wave19data,
                wave29data,
                wave30data,
                wave31data,
-               wave32data)
+               wave32data,
+               wave33data)
 
 occupations.wah<-as.data.frame(read.csv('occupations_workathome.CSV'))
 
@@ -824,11 +832,9 @@ colnames(teleworkability.yr.occ)<-paste('teleworkability_',yr,'_occ',sep='')
 full_df<-cbind(full_df,teleworkability.yr.occ)
 }
 
-
 df.test<-subset(full_df, is.na(teleworkability_2019_occ)&
                   occupation_2019>0)
 sort(table(df.test[,'occupation_2019']))
-
 
 summary(lm(offer_remote_work~teleworkability_2019_occ,
             data=subset(full_df,offer_remote_work>=0&year==2019&
@@ -837,6 +843,11 @@ summary(lm(offer_remote_work~teleworkability_2019_occ,
 
 summary(lm(use_remote_work~teleworkability_2019_occ,
            data=subset(full_df,use_remote_work>=0&year==2019&
+                         teleworkability_2019_occ>=0),
+           weights=weights))
+
+summary(lm(main_work_location==1~teleworkability_2019_occ,
+           data=subset(full_df,main_work_location>0&year==2019&
                          teleworkability_2019_occ>=0),
            weights=weights))
 
@@ -861,6 +872,4 @@ summary(lm(use_remote_work~teleworkability_2019_occ,
 table(occupations.wah[,'teleworkable'])/nrow(occupations.wah)
 
 write.csv(occupations.wah,'occupations_by_remote_workability.CSV')
-
-setwd('Z:\\Projects\\remote_work\\UKDA-6931-stata\\stata\\stata13_se\\ukhls')
-write.csv(full_df,'US_data_remote_work_v2.CSV')
+write.csv(full_df,'US_data_remote_work_v4.CSV')
